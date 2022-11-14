@@ -71,7 +71,7 @@
 
 extern void setTMPLbit(void);
 extern void setASPbit(void);
-extern void setPSP(uint32_t* stack);
+extern void setPSP(uint32_t *stack);
 extern uint32_t* getPSP(void);
 extern uint32_t* getMSP(void);
 
@@ -136,19 +136,19 @@ struct _tcb
 // still need to "update the SRD bits for the current thread" whatever that means.
 void * mallocFromHeap(uint32_t size_in_bytes)
 {
-    void * ptr = NULL;
-    static uint32_t * heap = 0x20001800;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
+    void * ptr = 0;
+    static uint32_t * heap = (uint32_t *)0x20001800;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
     size_in_bytes = (((size_in_bytes-1)/1024)+1)*1024;
     heap += size_in_bytes;
-    if(heap >= 0x20008000)
+    if(heap >= (uint32_t *)0x20008000)
     {
         ptr = 0;
     }
     else
     {
-        ptr = (uint32_t *)TOP_OF_SRAM - (size_in_bytes/4);
+        ptr = heap;
     }
-    return ptr;
+    return (void *)ptr;
 }
 
 // REQUIRED: add your MPU functions here
@@ -238,7 +238,7 @@ void initMpu(void)
     // REQUIRED: call your MPU functions here
     allowBackgroundAccess();                        // Region 0 will be the background region
     setupSramAccess();                              // Setup SRAM memory regions 3-6
-    setPSP(TOP_OF_SRAM);                            // Set temporary PSP at the top of SRAM
+    setPSP((uint32_t *)TOP_OF_SRAM);                            // Set temporary PSP at the top of SRAM
     NVIC_MPU_NUMBER_R &= ~(0b111);                  // Clearing MPU targeting register
     NVIC_MPU_NUMBER_R |= 0b110;                     // Targetting MPU Region 6
     NVIC_MPU_ATTR_R &= ~(0x11 << 8);                // Disable unneeded subregions
@@ -288,11 +288,8 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
     bool found = false;
     // REQUIRED:
     // store the thread name
-    strCopy(tcb[i].name, name);
     // allocate stack space and store top of stack in sp and spInit
     void * ptr = mallocFromHeap(stackBytes);
-    tcb[i].spInit = ptr;
-    tcb[i].sp = ptr;
     
     // add task if room in task list
     if (taskCount < MAX_TASKS)
@@ -309,10 +306,11 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
             while (tcb[i].state != STATE_INVALID) {i++;}
             tcb[i].state = STATE_UNRUN;
             tcb[i].pid = fn;
-            tcb[i].sp = 0;
-            tcb[i].spInit = 0;
+            tcb[i].sp = ptr;                        // set tcb[i].sp = ptr 11/13 JL
+            tcb[i].spInit = ptr;                    // set tcb[i].spInit = ptr 11/13 JL
             tcb[i].priority = priority;
             tcb[i].srd = 0;
+            strCopy(tcb[i].name, name);
             // increment task count
             taskCount++;
             ok = true;
@@ -348,11 +346,21 @@ bool createSemaphore(uint8_t semaphore, uint8_t count)
     return ok;
 }
 
+void makeRtosGreatAgain()
+{
+    // This is where we enable the memory windows and shit. Step 10 or w/e, later.
+    _fn funk = (_fn)tcb[taskCurrent].pid;
+    (*funk)();
+}
+
 // REQUIRED: modify this function to start the operating system
 // by calling scheduler, setting PSP, ASP bit, TMPL bit, and PC
 void startRtos()
 {
-    
+    taskCurrent = rtosScheduler();
+    setPSP(tcb[taskCurrent].sp);
+    setASPbit();
+    makeRtosGreatAgain();
 }
 
 // REQUIRED: modify this function to yield execution back to scheduler using pendsv
@@ -403,56 +411,56 @@ void mpuFaultIsr()
     putcUart0('\n');
     char str[11];
     putsUart0("Process Stack Pointer: ");
-    regToHex((uint32_t)getPSP(),str);
+    //regToHex((uint32_t)getPSP(),str);
     putsUart0(str);
     putsUart0("\n");
     putsUart0("Main Stack Pointer: ");
-    regToHex((uint32_t)getMSP(),str);
+    //regToHex((uint32_t)getMSP(),str);
     putsUart0(str);
     putsUart0("\n");
     putsUart0("Offending instruction address: ");
-    regToHex((uint32_t)(*(getPSP()+5)),str);
+    //regToHex((uint32_t)(*(getPSP()+5)),str);
     putsUart0(str);
     putsUart0("\n");
     uint32_t dataAddr = NVIC_MM_ADDR_R;
     if(NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_MMARV)      // If we have a valid address for faulting instruction
     {
         putsUart0("Offending data address: ");
-        regToHex(dataAddr,str);
+        //regToHex(dataAddr,str);
         putsUart0(str);
         putsUart0("\n");
     }
     putsUart0("Process Stack Dump: \n");
     putsUart0("R0: ");
-    regToHex((uint32_t)(*(getPSP()+0)),str);
+    //regToHex((uint32_t)(*(getPSP()+0)),str);
     putsUart0(str);
     putsUart0("\n");
     putsUart0("R1: ");
-    regToHex((uint32_t)(*(getPSP()+1)),str);
+   // regToHex((uint32_t)(*(getPSP()+1)),str);
     putsUart0(str);
     putsUart0("\n");
     putsUart0("R2: ");
-    regToHex((uint32_t)(*(getPSP()+2)),str);
+//    regToHex((uint32_t)(*(getPSP()+2)),str);
     putsUart0(str);
     putsUart0("\n");
     putsUart0("R3: ");
-    regToHex((uint32_t)(*(getPSP()+3)),str);
+//    regToHex((uint32_t)(*(getPSP()+3)),str);
     putsUart0(str);
     putsUart0("\n");
     putsUart0("R12: ");
-    regToHex((uint32_t)(*(getPSP()+4)),str);
+//    regToHex((uint32_t)(*(getPSP()+4)),str);
     putsUart0(str);
     putsUart0("\n");
     putsUart0("LR: ");
-    regToHex((uint32_t)(*(getPSP()+5)),str);
+//    regToHex((uint32_t)(*(getPSP()+5)),str);
     putsUart0(str);
     putsUart0("\n");
     putsUart0("PC: ");
-    regToHex((uint32_t)(*(getPSP()+6)),str);
+//    regToHex((uint32_t)(*(getPSP()+6)),str);
     putsUart0(str);
     putsUart0("\n");
     putsUart0("xPSR: ");
-    regToHex((uint32_t)(*(getPSP()+7)),str);
+//    regToHex((uint32_t)(*(getPSP()+7)),str);
     putsUart0(str);
     putsUart0("\n");
 
@@ -470,15 +478,15 @@ void hardFaultIsr()
      putcUart0('\n');
      char str[11];
      putsUart0("Process Stack Pointer: ");
-     regToHex((uint32_t)getPSP(),str);
+     //regToHex((uint32_t)getPSP(),str);
      putsUart0(str);
      putsUart0("\n");
      putsUart0("Main Stack Pointer: ");
-     regToHex((uint32_t)getMSP(),str);
+    // regToHex((uint32_t)getMSP(),str);
      putsUart0(str);
      putsUart0("\n");
      putsUart0("Hard Fault Flags: ");
-     regToHex(NVIC_HFAULT_STAT_R,str);
+     //regToHex(NVIC_HFAULT_STAT_R,str);
      putsUart0(str);
      putsUart0("\n");
      if(NVIC_HFAULT_STAT_R & NVIC_HFAULT_STAT_DBG)
@@ -776,8 +784,9 @@ int main(void)
     // Initialize hardware
     initHw();
     initUart0();
-    initMpu();
+//    initMpu();
     initRtos();
+//    enableFaultExceptions();
 
     // Setup UART0 baud rate
     setUart0BaudRate(115200, 40e6);
