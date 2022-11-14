@@ -131,10 +131,12 @@ struct _tcb
 // Memory Manager and MPU Funcitons
 //-----------------------------------------------------------------------------
 
-// TODO: add your malloc code here and update the SRD bits for the current thread
+// TODO: add your malloc code here and update the SRD bits for the current thread 
+// mallocFromHeap() completed JL 11/13
+// still need to "update the SRD bits for the current thread" whatever that means.
 void * mallocFromHeap(uint32_t size_in_bytes)
 {
-    static uint32_t * heap = 0x20001800;
+    static uint32_t * heap = 0x20001800;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
         size_in_bytes = (((size_in_bytes-1)/1024)+1)*1024;
         heap += size_in_bytes;
         if(heap >= 0x20008000)
@@ -287,6 +289,9 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
     // store the thread name
     strCopy(tcb.name, name);
     // allocate stack space and store top of stack in sp and spInit
+    void * ptr = mallocFromHeap(stackBytes);
+    tcb.spInit = ptr;
+    tcb.sp = ptr;
     
     // add task if room in task list
     if (taskCount < MAX_TASKS)
