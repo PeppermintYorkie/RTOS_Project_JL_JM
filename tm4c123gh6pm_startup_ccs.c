@@ -59,6 +59,9 @@ void usageFaultIsr();
 void busFaultIsr();
 void hardFaultIsr();
 void mpuFaultIsr();
+void svCallIsr();
+void pendSvIsr();
+void systickIsr();
 
 //*****************************************************************************
 //
@@ -74,19 +77,19 @@ void (* const g_pfnVectors[])(void) =
                                             // The initial stack pointer
     ResetISR,                               // The reset handler
     NmiSR,                                  // The NMI handler
-    hardFaultIsr,                               // The hard fault handler
-    mpuFaultIsr,                      // The MPU fault handler
-    busFaultIsr,                      // The bus fault handler
-    usageFaultIsr,                      // The usage fault handler
+    hardFaultIsr,                           // The hard fault handler
+    mpuFaultIsr,                            // The MPU fault handler
+    busFaultIsr,                            // The bus fault handler
+    usageFaultIsr,                          // The usage fault handler
     0,                                      // Reserved
     0,                                      // Reserved
     0,                                      // Reserved
     0,                                      // Reserved
-    IntDefaultHandler,                      // SVCall handler
+    svCallIsr,                              // SVCall handler
     IntDefaultHandler,                      // Debug monitor handler
     0,                                      // Reserved
-    IntDefaultHandler,                      // The PendSV handler
-    IntDefaultHandler,                      // The SysTick handler
+    pendSvIsr,                              // The PendSV handler
+    systickIsr,                             // The SysTick handler
     IntDefaultHandler,                      // GPIO Port A
     IntDefaultHandler,                      // GPIO Port B
     IntDefaultHandler,                      // GPIO Port C

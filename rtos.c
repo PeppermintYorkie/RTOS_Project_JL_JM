@@ -1,7 +1,7 @@
 // RTOS Framework - Fall 2022
 // J Losh
 
-// Student Name:
+// Student Name: Jackson Liller & Joanne Mathew
 // TO DO: Add your name(s) on this line.
 //        Do not include your ID number(s) in the file.
 
@@ -52,7 +52,7 @@
 #include "wait.h"
 #include "shell.h"
 #include "kernel.h"
-// TODO: Add header files here for your strings functions, ... - DONE JL JM 10/31
+// TODO: Add header files here for your strings functions, ... - DONE JL & JM, 10/31
 
 #define BLUE_LED   PORTF,2          // on-board blue LED
 #define RED_LED    PORTE,0          // off-board red LED
@@ -66,6 +66,14 @@
 #define PB3     PORTC,5             // Off-board pushbutton 3
 #define PB4     PORTC,6             // Off-board pushbutton 4
 #define PB5     PORTC,7             // Off-board pushbutton 5
+
+#define YIELD 0
+#define SLEEP 1
+#define WAIT 2
+#define POST 3
+#define GET_PID 4
+#define KILL 5
+#define PMAP 6
 
 #define TOP_OF_SRAM 0x20008000      // A macro for the top of SRAM memory
 
@@ -297,7 +305,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
         // make sure fn not already in list (prevent reentrancy)
         while (!found && (i < MAX_TASKS))
         {
-            found = (tcb[i++].pid ==  fn);
+            found = (tcb[i++].pid == fn);
         }
         if (!found)
         {
@@ -363,25 +371,29 @@ void startRtos()
     makeRtosGreatAgain();
 }
 
-// REQUIRED: modify this function to yield execution back to scheduler using pendsv
+// REQUIRED: modify this function to yield execution back to scheduler using pendsv - JM, 11/14
 void yield()
 {
+    __asm("  SVC #0");
 }
 
 // REQUIRED: modify this function to support 1ms system timer
-// execution yielded back to scheduler until time elapses using pendsv
+// execution yielded back to scheduler until time elapses using pendsv - JM, 11/14
 void sleep(uint32_t tick)
 {
+    __asm("  SVC #1");
 }
 
-// REQUIRED: modify this function to wait a semaphore using pendsv
+// REQUIRED: modify this function to wait a semaphore using pendsv - JM, 11/14
 void wait(int8_t semaphore)
 {
+    __asm("  SVC #2");
 }
 
-// REQUIRED: modify this function to signal a semaphore is available using pendsv
+// REQUIRED: modify this function to signal a semaphore is available using pendsv - JM, 11/14
 void post(int8_t semaphore)
 {
+    __asm("  SVC #3");
 }
 
 // REQUIRED: modify this function to add support for the system timer
@@ -390,129 +402,125 @@ void systickIsr()
 {
 }
 
-// REQUIRED: in coop and preemptive, modify this function to add support for task switching
+// REQUIRED: in coop and preemptive, modify this function to add support for task switching - JM, 11/14
 // REQUIRED: process UNRUN and READY tasks differently
 void pendSvIsr()
 {
+    printf("PendSV called in process %d \r\n", tcb[taskCurrent].pid); //just taskCurrent instead of tcb[taskCurrent].pid??
+
+    if(NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_DERR)
+    {
+        NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_DERR;
+        putsUart0("Called from MPU \n");
+    }
+
+    if(NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_IERR)
+    {
+        NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_IERR;
+        putsUart0("Called from MPU \n");
+    }
 }
 
-// REQUIRED: modify this function to add support for the service call
+// REQUIRED: modify this function to add support for the service call - JM, 11/14
 // REQUIRED: in preemptive code, add code to handle synchronization primitives
 void svCallIsr()
 {
+    // get stack dump and get PC value, get address of PC, dec by 2 bytes
+    // get value at that address, and that is the SVC number
+    // if SVC number is 0, yield
+    // if SVC number is 1, sleep
+    // if SVC number is 2, wait
+    // if SVC number is 3, post
+    // if SVC number is 4, getPid
+    // if SVC number is 5, kill
+    // if SVC number is 6, pmap
+
+    //uint8_t svcNum = *((uint8_t*)tcb[taskCurrent].sp - 2);
+    //uint8_t svcNum = *((uint8_t*)getPSP() - 2);
+    uint8_t svcNum = *(getPSP() + 4);
+
+    switch svcNum
+    {
+        case YIELD:
+            // set pendsv bit
+            NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
+            break;
+        case SLEEP:
+            //
+            break;
+        case WAIT:
+            //
+            break;
+        case POST:
+            //
+            break;
+        case GET_PID:
+            //
+            break;
+        case KILL:
+            //
+            break;
+        case PMAP:
+            //
+            break;
+        default:
+            putsUart0("Invalid SVC number \n");
+            break;
+    }
 }
 
-// REQUIRED: code this function - Needs process name printing JL 10/28
+// REQUIRED: code this function - JL & JM, 11/14
 void mpuFaultIsr()
 {
-    putsUart0("MPU fault in process ");
-    // something that converts int to string
-    // something that prints that string, and newlines
-    putcUart0('\n');
-    char str[11];
-    putsUart0("Process Stack Pointer: ");
-    //regToHex((uint32_t)getPSP(),str);
-    putsUart0(str);
-    putsUart0("\n");
-    putsUart0("Main Stack Pointer: ");
-    //regToHex((uint32_t)getMSP(),str);
-    putsUart0(str);
-    putsUart0("\n");
-    putsUart0("Offending instruction address: ");
-    //regToHex((uint32_t)(*(getPSP()+5)),str);
-    putsUart0(str);
-    putsUart0("\n");
-    uint32_t dataAddr = NVIC_MM_ADDR_R;
-    if(NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_MMARV)      // If we have a valid address for faulting instruction
-    {
-        putsUart0("Offending data address: ");
-        //regToHex(dataAddr,str);
-        putsUart0(str);
-        putsUart0("\n");
-    }
-    putsUart0("Process Stack Dump: \n");
-    putsUart0("R0: ");
-    //regToHex((uint32_t)(*(getPSP()+0)),str);
-    putsUart0(str);
-    putsUart0("\n");
-    putsUart0("R1: ");
-   // regToHex((uint32_t)(*(getPSP()+1)),str);
-    putsUart0(str);
-    putsUart0("\n");
-    putsUart0("R2: ");
-//    regToHex((uint32_t)(*(getPSP()+2)),str);
-    putsUart0(str);
-    putsUart0("\n");
-    putsUart0("R3: ");
-//    regToHex((uint32_t)(*(getPSP()+3)),str);
-    putsUart0(str);
-    putsUart0("\n");
-    putsUart0("R12: ");
-//    regToHex((uint32_t)(*(getPSP()+4)),str);
-    putsUart0(str);
-    putsUart0("\n");
-    putsUart0("LR: ");
-//    regToHex((uint32_t)(*(getPSP()+5)),str);
-    putsUart0(str);
-    putsUart0("\n");
-    putsUart0("PC: ");
-//    regToHex((uint32_t)(*(getPSP()+6)),str);
-    putsUart0(str);
-    putsUart0("\n");
-    putsUart0("xPSR: ");
-//    regToHex((uint32_t)(*(getPSP()+7)),str);
-    putsUart0(str);
-    putsUart0("\n");
+    printf("MPU Fault in process %d \r\n", tcb[taskCurrent].pid);
+    printf("Value of PSP: %h \r\n", (uint32_t)getPSP);
+    printf("Value of MSP: %h \r\n", (uint32_t)getMSP);
+    printf("Value of NVIC_FAULT_STAT_R: %h \r\n", NVIC_FAULT_STAT_R);
+    printf("Address of offending instruction: %h \r\n", *(getPSP()+5));
 
-    putsUart0("\n");
-    NVIC_SYS_HND_CTRL_R &= ~(NVIC_SYS_HND_CTRL_MEMP);
+    if(NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_MMARV)
+        printf("Address of offending data: %h \r\n", NVIC_MM_ADDR_R);
+
+    putsUart0("Process Stack Dump: \r\n");
+    printf("R0: %h \r\n", *(getPSP()));
+    printf("R1: %h \r\n", *(getPSP()+1));
+    printf("R2: %h \r\n", *(getPSP()+2));
+    printf("R3: %h \r\n", *(getPSP()+3));
+    printf("R12: %h \r\n", *(getPSP()+4));
+    printf("LR: %h \r\n", *(getPSP()+5));
+    printf("PC: %h \r\n", *(getPSP()+6));
+    printf("xPSR: %h \r\n", *(getPSP()+7));
+
+    NVIC_SYS_HND_CTRL_R &= ~NVIC_SYS_HND_CTRL_MEMP;
     NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
 }
 
-// REQUIRED: code this function - Needs process name printing JL 10/28
+// REQUIRED: code this function - JL & JM, 11/14
 void hardFaultIsr()
 {
-    putsUart0("Hard fault in process ");
-     // something that converts int to string
-     // something that prints that string, and newlines
-     putcUart0('\n');
-     char str[11];
-     putsUart0("Process Stack Pointer: ");
-     //regToHex((uint32_t)getPSP(),str);
-     putsUart0(str);
-     putsUart0("\n");
-     putsUart0("Main Stack Pointer: ");
-    // regToHex((uint32_t)getMSP(),str);
-     putsUart0(str);
-     putsUart0("\n");
-     putsUart0("Hard Fault Flags: ");
-     //regToHex(NVIC_HFAULT_STAT_R,str);
-     putsUart0(str);
-     putsUart0("\n");
-     if(NVIC_HFAULT_STAT_R & NVIC_HFAULT_STAT_DBG)
-         putsUart0("Hard fault by debug event has occurred.\n");
-     if(NVIC_HFAULT_STAT_R & NVIC_HFAULT_STAT_FORCED)
-         putsUart0("Forced hard fault has occurred.\n");
-     if(NVIC_HFAULT_STAT_R & NVIC_HFAULT_STAT_VECT)
-         putsUart0("A bus fault occurred on a vector table read.\n");
+    printf("Hard Fault in process %d \r\n", tcb[taskCurrent].pid);
+    printf("Value of PSP: %h \r\n", (uint32_t)getPSP);
+    printf("Value of MSP: %h \r\n", (uint32_t)getMSP);
+    printf("Value of NVIC_HFAULT_STAT_R: %h \r\n", NVIC_HFAULT_STAT_R);
+
+    if(NVIC_HFAULT_STAT_R & NVIC_HFAULT_STAT_DBG)
+        putsUart0("Hard Fault triggered by Debug Event \n");
+    if(NVIC_HFAULT_STAT_R & NVIC_HFAULT_STAT_FORCED)
+        putsUart0("Hard Fault triggered by Forced Hard Fault \n");
+    if(NVIC_HFAULT_STAT_R & NVIC_HFAULT_STAT_VECT)
+        putsUart0("Hard Fault triggered by Vector Table Read Fault \n");
 }
 
-// REQUIRED: code this function - Needs process name printing JL 10/28
+// REQUIRED: code this function - JL & JM, 11/14
 void busFaultIsr()
 {
-    putsUart0("Bus fault in process ");
-    // something that converts int to string
-    // something that prints that string, and newlines
-    putcUart0('\n');
+    printf("Bus Fault in process %d \r\n", tcb[taskCurrent].pid);
 }
 
-// REQUIRED: code this function - Needs process name printing JL 10/28
+// REQUIRED: code this function - JL & JM, 11/14
 void usageFaultIsr()
 {
-    putsUart0("Usage fault in process ");
-    // something that converts int to string
-    // something that prints that string, and newlines
-    putcUart0('\n');
+    printf("Usage Fault in process %d \r\n", tcb[taskCurrent].pid);
 }
 
 //-----------------------------------------------------------------------------
