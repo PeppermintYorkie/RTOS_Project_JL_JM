@@ -82,7 +82,10 @@ extern void setASPbit(void);
 extern void setPSP(uint32_t *stack);
 extern uint32_t* getPSP(void);
 extern uint32_t* getMSP(void);
-
+extern uint32_t* pushContext(uint32_t *stack);
+extern uint32_t* popContext(uint32_t *stack);
+extern void fabricateContext(void *pid);
+extern uint32_t extractSVC(uint32_t *stack);
 
 //-----------------------------------------------------------------------------
 // RTOS Defines and Kernel Variables
@@ -276,9 +279,27 @@ void initRtos()
 // REQUIRED: Implement prioritization to 8 levels
 int rtosScheduler()
 {
+    //bool ok = false, highestPriorityTaskFound = false;
     bool ok;
     static uint8_t task = 0xFF;
     ok = false;
+
+    /*
+    //int8_t priorityArray[MAX_TASKS];
+    int8_t highestPriority = 0, currentPriority = 0;
+    for(uint8_t i = 0; i < MAX_TASKS; i++)
+    {
+        if(tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN)
+            currentPriority = tcb[i].priority;
+        
+        if(currentPriority > highestPriority)
+        {
+            highestPriority = currentPriority;
+            task = i;//
+        }
+    }
+    */
+
     while (!ok)
     {
         task++;
@@ -366,6 +387,7 @@ void makeRtosGreatAgain()
 void startRtos()
 {
     taskCurrent = rtosScheduler();
+    tcb[taskCurrent].state = STATE_READY;
     setPSP(tcb[taskCurrent].sp);
     setASPbit();
     makeRtosGreatAgain();
@@ -406,8 +428,7 @@ void systickIsr()
 // REQUIRED: process UNRUN and READY tasks differently
 void pendSvIsr()
 {
-    printf("PendSV called in process %d \r\n", tcb[taskCurrent].pid); //just taskCurrent instead of tcb[taskCurrent].pid??
-
+    // printf("PendSV called in process %d \r\n", taskCurrent); //just taskCurrent instead of tcb[taskCurrent].pid?? //((uint32_t)tcb[taskCurrent].pid)
     if(NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_DERR)
     {
         NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_DERR;
@@ -418,6 +439,34 @@ void pendSvIsr()
     {
         NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_IERR;
         putsUart0("Called from MPU \n");
+    }
+
+    //get PSP (in C) (send to pushContext)
+    //store R4 in PSP, decrement PSP by 4 bytes (-4) (in asm, part of pushContext)
+    //repeat for R5-R11 (in asm, part of pushContext)
+    //save PSP in tcb[taskCurrent].sp (in C)
+
+    tcb[taskCurrent].sp = pushContext(getPSP());
+    
+    //call rtosScheduler to get next task (idle) (in C)
+    //load tcb[taskCurrent].sp into PSP (where taskCurrent has already been updated to be the next task by rtosScheduler) (in C)
+    //check if task is UNRUN (in C) or READY (in C)
+        //if UNRUN, fabricate context (in asm)
+    //load R4 from PSP, increment PSP by 4 bytes (+4) (in asm, part of popContext)
+    //repeat for R5-R11 (in asm, part of popContext)
+    //set PSP to return value of popContext (in C)
+
+    taskCurrent = rtosScheduler();
+    if(tcb[taskCurrent].state == STATE_READY)
+    {
+        setPSP(tcb[taskCurrent].sp);
+        setPSP(popContext(getPSP()));
+    }
+    else if(tcb[taskCurrent].state == STATE_UNRUN)
+    {
+        setPSP(tcb[taskCurrent].spInit);
+        fabricateContext(tcb[taskCurrent].pid);
+        tcb[taskCurrent].state = STATE_READY;
     }
 }
 
@@ -434,12 +483,15 @@ void svCallIsr()
     // if SVC number is 4, getPid
     // if SVC number is 5, kill
     // if SVC number is 6, pmap
+    // if SVC number is 7, ps
+    // if SVC number is 8, ipcs
 
-    //uint8_t svcNum = *((uint8_t*)tcb[taskCurrent].sp - 2);
-    //uint8_t svcNum = *((uint8_t*)getPSP() - 2);
-    uint8_t svcNum = *(getPSP() + 4);
+    //uint8_t svcNum = *((uint8_t*)tcb[taskCurrent].sp - 2); //not sure if need to decrement by 2
+    //uint8_t svcNum = *((uint8_t*)getPSP() - 2);            //not sure if need to decrement by 2
+    //uint8_t svcNum = (*(getPSP() + 5) - 2);
+    uint32_t svcNum = extractSVC(getPSP());
 
-    switch svcNum
+    switch (svcNum)
     {
         case YIELD:
             // set pendsv bit
@@ -464,7 +516,7 @@ void svCallIsr()
             //
             break;
         default:
-            putsUart0("Invalid SVC number \n");
+            putsUart0("Invalid SVC number \r\n");
             break;
     }
 }
@@ -472,7 +524,7 @@ void svCallIsr()
 // REQUIRED: code this function - JL & JM, 11/14
 void mpuFaultIsr()
 {
-    printf("MPU Fault in process %d \r\n", tcb[taskCurrent].pid);
+    printf("MPU Fault in process %d \r\n", taskCurrent); //*((uint32_t*)tcb[taskCurrent].pid)
     printf("Value of PSP: %h \r\n", (uint32_t)getPSP);
     printf("Value of MSP: %h \r\n", (uint32_t)getMSP);
     printf("Value of NVIC_FAULT_STAT_R: %h \r\n", NVIC_FAULT_STAT_R);
@@ -498,7 +550,7 @@ void mpuFaultIsr()
 // REQUIRED: code this function - JL & JM, 11/14
 void hardFaultIsr()
 {
-    printf("Hard Fault in process %d \r\n", tcb[taskCurrent].pid);
+    printf("Hard Fault in process %d \r\n", taskCurrent);
     printf("Value of PSP: %h \r\n", (uint32_t)getPSP);
     printf("Value of MSP: %h \r\n", (uint32_t)getMSP);
     printf("Value of NVIC_HFAULT_STAT_R: %h \r\n", NVIC_HFAULT_STAT_R);
@@ -514,13 +566,13 @@ void hardFaultIsr()
 // REQUIRED: code this function - JL & JM, 11/14
 void busFaultIsr()
 {
-    printf("Bus Fault in process %d \r\n", tcb[taskCurrent].pid);
+    printf("Bus Fault in process %d \r\n", taskCurrent);
 }
 
 // REQUIRED: code this function - JL & JM, 11/14
 void usageFaultIsr()
 {
-    printf("Usage Fault in process %d \r\n", tcb[taskCurrent].pid);
+    printf("Usage Fault in process %d \r\n", taskCurrent);
 }
 
 //-----------------------------------------------------------------------------
@@ -625,6 +677,17 @@ void idle()
         setPinValue(ORANGE_LED, 1);
         waitMicrosecond(1000);
         setPinValue(ORANGE_LED, 0);
+        yield();
+    }
+}
+
+void idle2()
+{
+    while(true)
+    {
+        setPinValue(RED_LED, 1);
+        waitMicrosecond(1000);
+        setPinValue(RED_LED, 0);
         yield();
     }
 }
@@ -792,9 +855,9 @@ int main(void)
     // Initialize hardware
     initHw();
     initUart0();
-//    initMpu();
+    //initMpu();
     initRtos();
-//    enableFaultExceptions();
+    enableFaultExceptions();
 
     // Setup UART0 baud rate
     setUart0BaudRate(115200, 40e6);
@@ -813,6 +876,7 @@ int main(void)
 
     // Add required idle process at lowest priority
     ok =  createThread(idle, "Idle", 7, 1024);
+    ok &=  createThread(idle2, "Idle2", 7, 1024);
 
     // Add other processes
 //    ok &= createThread(lengthyFn, "LengthyFn", 6, 1024);
