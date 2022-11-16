@@ -159,6 +159,28 @@ void * mallocFromHeap(uint32_t size_in_bytes)
     {
         ptr = heap;
     }
+
+    //find the subregions you need to enable
+        // find the starting subregion by locating ptr against the mpu regions
+                // mpu region 3 starts at 0x2000.0000 and ends at 0x2000.2000
+                // mpu region 4 starts at 0x2000.2000 and ends at 0x2000.4000
+                // mpu region 5 starts at 0x2000.4000 and ends at 0x2000.6000
+                // mpu region 6 starts at 0x2000.6000 and ends at 0x2000.8000
+
+        // Once you find the region, find it's subregion. ptr will be pointing at maybe 0x2000.347C for example. 
+        // This is in region 4. Region 4 is divided into 8 subregions of 1kB each. This ptr will be pointing at the 
+        // first subregion. That's the first one we will enable.
+        // Next, find out how many regions you will enable. Do this by looking at size_in_bytes. It should already be 
+        // sized for the number of whole 1kB subregions you need. Say size_in_bytes turned out to be 3.
+
+        // Finally, flip the corresponding subregions in tcb[currentTask].srd to ones. For our above example, we would end
+        // up with uint32_t srd = 1110.0000.0000.0000.0000.0000.0000.0000.
+
+        // If that doesn't make sense, call me. If I'm awake I'll try my best.
+
+
+
+
     return (void *)ptr;
 }
 
