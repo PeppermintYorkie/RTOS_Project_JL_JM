@@ -150,7 +150,7 @@ void * mallocFromHeap(uint32_t size_in_bytes)
     void * ptr = 0;
     static uint32_t * heap = (uint32_t *)0x20001800;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
     size_in_bytes = (((size_in_bytes-1)/1024)+1)*1024;
-    heap += size_in_bytes;
+    heap += (size_in_bytes / 4);
     if(heap >= (uint32_t *)0x20008000)
     {
         ptr = 0;
@@ -159,6 +159,74 @@ void * mallocFromHeap(uint32_t size_in_bytes)
     {
         ptr = heap;
     }
+
+    uint32_t baseAddr = (uint32_t) ptr;
+    uint32_t srdBits = 0x00000000;                                       // We'll need this later
+    uint8_t subRegion0 = ((baseAddr - 0x20000000) / 0x400) - 1;       // This is the first sub region we will enable.
+    uint8_t numSubregions = size_in_bytes / 0x400;              // This is the number of subregions we will need to cover the request
+    if(size_in_bytes % 0x400 != 0)
+        numSubregions++;                                        // Users don't care about sub region size. Make sure they get all the memory they need, even if it's more than they need. Hell, give them all of the memory, see if I care.
+    uint8_t i = 0;
+    for(i = 0; i < numSubregions; i++)
+    {
+        srdBits |= (1 << (subRegion0 + i));                     // This SHOULD fill srdBits with 1s where we want to disable subregion protection, i.e. give access to a program calling this function
+    }
+
+    tcb[taskCurrent].srd |= srdBits;
+
+    srdBits = tcb[taskCurrent].srd;
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 3 (first SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b011;                              // Let's look at region 3
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 3, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 4 (second SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b100;                              // Let's look at region 4
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 4, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 5 (third SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b101;                              // Let's look at region 5
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 5, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 6 (fourth SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b110;                              // Let's look at region 6
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 6, shifts them into position, and writes to attribute register.
+
+    // if((ptr >= 0x20000000) && (ptr <= 0x20002000))
+    // {
+    //     uint32_t *ranger = 0x20000000;
+    //     uint8_t startingSubRegion = 0;
+    //     while(ranger < ptr)
+    //     {
+    //         ranger += 0x400;
+    //         startingSubRegion++;
+    //     }
+    //     // when we exit this loop, ranger should be pointing at the first subregion we need access to, and startingSubRegion should be the first subregion we need.
+    //     // loop through tcb[taskCurrent].srd for i<size_in_bytes and turn on each subregion's bit.
+    //     uint8_t i = 0;
+    //     for(i = 0; i < size_in_bytes; i++)
+    //     {
+            
+    //         tcb[taskCurrent].srd |= 
+    //     }
+    // }
+    // else if((ptr >= 0x20002001) && (ptr <= 0x20004000))
+    // {}
+    // else if((ptr >= 0x20004001) && (ptr <= 0x20006000))
+    // {}
+    // else if((ptr >= 0x20006001) && (ptr <= 0x20008000))
+    // {}
+
 
     //find the subregions you need to enable
         // find the starting subregion by locating ptr against the mpu regions
@@ -270,14 +338,13 @@ void initMpu(void)
 {
     // REQUIRED: call your MPU functions here
     allowBackgroundAccess();                        // Region 0 will be the background region
-    setupSramAccess();                              // Setup SRAM memory regions 3-6
-    setPSP((uint32_t *)TOP_OF_SRAM);                            // Set temporary PSP at the top of SRAM
+    setupSramAccess();                              // Setup SRAM memory regions 3-6    
+    setPSP((uint32_t *)TOP_OF_SRAM);                // Set temporary PSP at the top of SRAM
     NVIC_MPU_NUMBER_R &= ~(0b111);                  // Clearing MPU targeting register
-    NVIC_MPU_NUMBER_R |= 0b110;                     // Targetting MPU Region 6
+    NVIC_MPU_NUMBER_R |= 0b11;                      // Targetting MPU Region 6
     NVIC_MPU_ATTR_R &= ~(0x11 << 8);                // Disable unneeded subregions
     NVIC_MPU_ATTR_R |= ((0xFF & 0x80) << 8);        // Enabling top kB of memory for access.
     NVIC_MPU_CTRL_R |= NVIC_MPU_CTRL_ENABLE;        // Enable the MPU
-    setASPbit();
 }
 
 //-----------------------------------------------------------------------------
@@ -348,7 +415,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
     // REQUIRED:
     // store the thread name
     // allocate stack space and store top of stack in sp and spInit
-    void * ptr = mallocFromHeap(stackBytes);
+    void * ptr = mallocFromHeap(stackBytes) - 1;
     
     // add task if room in task list
     if (taskCount < MAX_TASKS)
@@ -368,7 +435,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
             tcb[i].sp = ptr;                        // set tcb[i].sp = ptr 11/13 JL
             tcb[i].spInit = ptr;                    // set tcb[i].spInit = ptr 11/13 JL
             tcb[i].priority = priority;
-            tcb[i].srd = 0;
+            // tcb[i].srd = 0;
             strCopy(tcb[i].name, name);
             // increment task count
             taskCount++;
@@ -409,6 +476,7 @@ void makeRtosGreatAgain()
 {
     // This is where we enable the memory windows and shit. Step 10 or w/e, later.
     _fn funk = (_fn)tcb[taskCurrent].pid;
+    setTMPLbit();
     (*funk)();
 }
 
@@ -478,13 +546,13 @@ void pendSvIsr()
     if(NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_DERR)
     {
         NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_DERR;
-        putsUart0("Called from MPU \n");
+        putsUart0("Called from MPU \r\n");
     }
 
     if(NVIC_FAULT_STAT_R & NVIC_FAULT_STAT_IERR)
     {
         NVIC_FAULT_STAT_R &= ~NVIC_FAULT_STAT_IERR;
-        putsUart0("Called from MPU \n");
+        putsUart0("Called from MPU \r\n");
     }
 
     //get PSP (in C) (send to pushContext)
@@ -503,17 +571,48 @@ void pendSvIsr()
     //set PSP to return value of popContext (in C)
 
     taskCurrent = rtosScheduler();
-    if(tcb[taskCurrent].state == STATE_READY)
+    uint32_t srdBits = tcb[taskCurrent].srd;
+/*
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 3 (first SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b011;                              // Let's look at region 3
+    NVIC_MPU_ATTR_R &= ~(0x11 << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 3, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 4 (second SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b100;                              // Let's look at region 4
+    NVIC_MPU_ATTR_R &= ~(0x11 << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 4, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 5 (third SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b101;                              // Let's look at region 5
+    NVIC_MPU_ATTR_R &= ~(0x11 << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 5, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 6 (fourth SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b110;                              // Let's look at region 6
+    NVIC_MPU_ATTR_R &= ~(0x11 << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 6, shifts them into position, and writes to attribute register.
+*/
+    if(tcb[taskCurrent].state == STATE_READY)       
     {
         setPSP(tcb[taskCurrent].sp);
         setPSP(popContext(getPSP()));
     }
-    else if(tcb[taskCurrent].state == STATE_UNRUN)
+    else if(tcb[taskCurrent].state == STATE_UNRUN)  // Doesn't need R4-R11 because unrun task has no context for those registers yet.
     {
         setPSP(tcb[taskCurrent].spInit);
         fabricateContext(tcb[taskCurrent].pid);
         tcb[taskCurrent].state = STATE_READY;
     }
+
+
+
 }
 
 // REQUIRED: modify this function to add support for the service call - JM, 11/14
@@ -906,7 +1005,7 @@ int main(void)
     // Initialize hardware
     initHw();
     initUart0();
-    //initMpu();
+    initMpu();
     initRtos();
     enableFaultExceptions();
 
