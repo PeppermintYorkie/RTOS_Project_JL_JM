@@ -498,7 +498,12 @@ void svCallIsr()
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
         case SLEEP:
-            //
+            //set state of task to delayed
+            //set tcb[taskCurrent].ticks to value passed in
+            //set pendsv bit??
+            //sysTickIsr() needs to decrement tcb[taskCurrent].ticks every time it triggers, set to trigger every 1ms
+            //if tcb[taskCurrent].ticks == 0, set state to ready
+                //cycle through tasks to find the task that has been delayed
             break;
         case WAIT:
             //
