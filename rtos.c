@@ -284,7 +284,7 @@ void initMpu(void)
 // RTOS Kernel Functions
 //-----------------------------------------------------------------------------
 
-// REQUIRED: initialize systick for 1ms system timer
+// REQUIRED: initialize systick for 1ms system timer - DONE JM, 11/15
 void initRtos()
 {
     uint8_t i;
@@ -296,6 +296,14 @@ void initRtos()
         tcb[i].state = STATE_INVALID;
         tcb[i].pid = 0;
     }
+
+    // initialize systick for 1ms system timer
+    NVIC_ST_CTRL_R |= NVIC_ST_CTRL_CLK_SRC | NVIC_ST_CTRL_INTEN | NVIC_ST_CTRL_ENABLE;
+    NVIC_ST_RELOAD_R = 39999; // 1ms reload value, ***look at this again***
+                              // probably because we're using the 40MHz clock, so since we want 1ms, 
+                              // we need 40,000 ticks because 40,000,000/1000 = 40,000
+                              // we use 40000-1 = 39999 because the reload value needs to be
+                              // 1 less than the number of ticks (datasheet pg 140)
 }
 
 // REQUIRED: Implement prioritization to 8 levels
@@ -444,6 +452,22 @@ void post(int8_t semaphore)
 // REQUIRED: in preemptive code, add code to request task switch
 void systickIsr()
 {
+    //cycle through tasks to find tasks that have been delayed
+    //sysTickIsr() needs to decrement tcb[taskCurrent].ticks for delayed tasks every time it triggers, set to trigger every 1ms
+    //if tcb[taskCurrent].ticks == 0, set state to ready
+
+    uint8_t i = 0;
+    for(i = 0; i < MAX_TASKS; i++)
+    {
+        if(tcb[i].state == STATE_DELAYED)
+        {
+            tcb[i].ticks--;
+            if(tcb[i].ticks == 0)
+            {
+                tcb[i].state = STATE_READY;
+            }
+        }
+    }
 }
 
 // REQUIRED: in coop and preemptive, modify this function to add support for task switching - JM, 11/14
@@ -522,10 +546,10 @@ void svCallIsr()
         case SLEEP:
             //set state of task to delayed
             //set tcb[taskCurrent].ticks to value passed in
-            //set pendsv bit??
-            //sysTickIsr() needs to decrement tcb[taskCurrent].ticks every time it triggers, set to trigger every 1ms
-            //if tcb[taskCurrent].ticks == 0, set state to ready
-                //cycle through tasks to find the task that has been delayed
+            //set pendsv bit
+            tcb[taskCurrent].ticks = *(getPSP());
+            tcb[taskCurrent].state = STATE_DELAYED;
+            NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
         case WAIT:
             //
@@ -886,7 +910,7 @@ int main(void)
     initRtos();
     enableFaultExceptions();
 
-    // Setup UART0 baud rate
+    // Setup UART0 baud rate 
     setUart0BaudRate(115200, 40e6);
 
     // Power-up flash
@@ -907,7 +931,7 @@ int main(void)
 
     // Add other processes
 //    ok &= createThread(lengthyFn, "LengthyFn", 6, 1024);
-//    ok &= createThread(flash4Hz, "Flash4Hz", 4, 1024);
+    ok &= createThread(flash4Hz, "Flash4Hz", 4, 1024);
 //    ok &= createThread(oneshot, "OneShot", 2, 1024);
 //    ok &= createThread(readKeys, "ReadKeys", 6, 1024);
 //    ok &= createThread(debounce, "Debounce", 6, 1024);
