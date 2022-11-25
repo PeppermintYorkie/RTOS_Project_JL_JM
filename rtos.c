@@ -69,11 +69,8 @@
 
 #define YIELD 0
 #define SLEEP 1
-#define WAIT 2
-#define POST 3
-#define GET_PID 4
-#define KILL 5
-#define PMAP 6
+#define WAIT  2
+#define POST  3
 
 #define TOP_OF_SRAM 0x20008000      // A macro for the top of SRAM memory
 
@@ -376,15 +373,11 @@ void initRtos()
 // REQUIRED: Implement prioritization to 8 levels
 int rtosScheduler()
 {
-    //bool ok = false, highestPriorityTaskFound = false;
-    bool ok;
+    bool ok = false, foundHighestPrio = false;
     static uint8_t task = 0xFF;
-    ok = false;
+    uint8_t highestPriority = 0, currentPriority = 0, i = 0;
 
-    /*
-    //int8_t priorityArray[MAX_TASKS];
-    int8_t highestPriority = 0, currentPriority = 0;
-    for(uint8_t i = 0; i < MAX_TASKS; i++)
+    for(i = 0; i < MAX_TASKS; i++)
     {
         if(tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN)
             currentPriority = tcb[i].priority;
@@ -392,17 +385,15 @@ int rtosScheduler()
         if(currentPriority > highestPriority)
         {
             highestPriority = currentPriority;
-            task = i;//
         }
     }
-    */
 
     while (!ok)
     {
         task++;
-        if (task >= MAX_TASKS)
+        if (task >= MAX_TASKS) // resets task to 0 to allow recycling through the tcb array
             task = 0;
-        ok = (tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN);
+        //ok = (tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN);
     }
     return task;
 }
@@ -559,9 +550,6 @@ void pendSvIsr()
     //store R4 in PSP, decrement PSP by 4 bytes (-4) (in asm, part of pushContext)
     //repeat for R5-R11 (in asm, part of pushContext)
     //save PSP in tcb[taskCurrent].sp (in C)
-
-    tcb[taskCurrent].sp = pushContext(getPSP());
-    
     //call rtosScheduler to get next task (idle) (in C)
     //load tcb[taskCurrent].sp into PSP (where taskCurrent has already been updated to be the next task by rtosScheduler) (in C)
     //check if task is UNRUN (in C) or READY (in C)
@@ -570,35 +558,10 @@ void pendSvIsr()
     //repeat for R5-R11 (in asm, part of popContext)
     //set PSP to return value of popContext (in C)
 
+    tcb[taskCurrent].sp = pushContext(getPSP());
     taskCurrent = rtosScheduler();
     uint32_t srdBits = tcb[taskCurrent].srd;
-/*
-    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 3 (first SRAM region)
-    NVIC_MPU_NUMBER_R |= 0b011;                              // Let's look at region 3
-    NVIC_MPU_ATTR_R &= ~(0x11 << 8);                        //Disable unneeded subregions
-    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 3, shifts them into position, and writes to attribute register.
 
-    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
-
-    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 4 (second SRAM region)
-    NVIC_MPU_NUMBER_R |= 0b100;                              // Let's look at region 4
-    NVIC_MPU_ATTR_R &= ~(0x11 << 8);                        //Disable unneeded subregions
-    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 4, shifts them into position, and writes to attribute register.
-
-    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
-
-    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 5 (third SRAM region)
-    NVIC_MPU_NUMBER_R |= 0b101;                              // Let's look at region 5
-    NVIC_MPU_ATTR_R &= ~(0x11 << 8);                        //Disable unneeded subregions
-    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 5, shifts them into position, and writes to attribute register.
-
-    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
-
-    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 6 (fourth SRAM region)
-    NVIC_MPU_NUMBER_R |= 0b110;                              // Let's look at region 6
-    NVIC_MPU_ATTR_R &= ~(0x11 << 8);                        //Disable unneeded subregions
-    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 6, shifts them into position, and writes to attribute register.
-*/
     if(tcb[taskCurrent].state == STATE_READY)       
     {
         setPSP(tcb[taskCurrent].sp);
@@ -610,9 +573,6 @@ void pendSvIsr()
         fabricateContext(tcb[taskCurrent].pid);
         tcb[taskCurrent].state = STATE_READY;
     }
-
-
-
 }
 
 // REQUIRED: modify this function to add support for the service call - JM, 11/14
@@ -625,15 +585,7 @@ void svCallIsr()
     // if SVC number is 1, sleep
     // if SVC number is 2, wait
     // if SVC number is 3, post
-    // if SVC number is 4, getPid
-    // if SVC number is 5, kill
-    // if SVC number is 6, pmap
-    // if SVC number is 7, ps
-    // if SVC number is 8, ipcs
 
-    //uint8_t svcNum = *((uint8_t*)tcb[taskCurrent].sp - 2); //not sure if need to decrement by 2
-    //uint8_t svcNum = *((uint8_t*)getPSP() - 2);            //not sure if need to decrement by 2
-    //uint8_t svcNum = (*(getPSP() + 5) - 2);
     uint32_t svcNum = extractSVC(getPSP());
 
     switch (svcNum)
@@ -651,19 +603,34 @@ void svCallIsr()
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
         case WAIT:
-            //
+            if(semaphores[*(getPSP())].count > 0)
+            {
+                semaphores[*(getPSP())].count--;
+            }
+            else
+            {
+                semaphores[*(getPSP())].processQueue[semaphores[*(getPSP())].queueSize] = taskCurrent;
+                semaphores[*(getPSP())].queueSize++;
+                //tcb[taskCurrent].semaphore = getPSP();
+                tcb[taskCurrent].state = STATE_BLOCKED;
+                NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
+            }
             break;
         case POST:
-            //
-            break;
-        case GET_PID:
-            //
-            break;
-        case KILL:
-            //
-            break;
-        case PMAP:
-            //
+            semaphores[*(getPSP())].count++;
+            if(semaphores[*(getPSP())].queueSize > 0)
+            {
+                tcb[semaphores[*(getPSP())].processQueue[0]].state = STATE_READY;
+                //tcb[semaphores[*(getPSP())].processQueue[0]].semaphore = 0; //?
+                semaphores[*(getPSP())].queueSize--;
+                uint8_t i = 0;
+                for(i = 0; i < semaphores[*(getPSP())].queueSize; i++)
+                {
+                    semaphores[*(getPSP())].processQueue[i] = semaphores[*(getPSP())].processQueue[i+1];
+                }
+                semaphores[*(getPSP())].count--;
+            }
+            NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
         default:
             putsUart0("Invalid SVC number \r\n");
@@ -1031,7 +998,7 @@ int main(void)
     // Add other processes
 //    ok &= createThread(lengthyFn, "LengthyFn", 6, 1024);
     ok &= createThread(flash4Hz, "Flash4Hz", 4, 1024);
-//    ok &= createThread(oneshot, "OneShot", 2, 1024);
+    ok &= createThread(oneshot, "OneShot", 2, 1024);
 //    ok &= createThread(readKeys, "ReadKeys", 6, 1024);
 //    ok &= createThread(debounce, "Debounce", 6, 1024);
 //    ok &= createThread(important, "Important", 0, 1024);
