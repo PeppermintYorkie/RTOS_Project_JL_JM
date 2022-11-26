@@ -141,7 +141,6 @@ struct _tcb
 
 // TODO: add your malloc code here and update the SRD bits for the current thread 
 // mallocFromHeap() completed JL 11/13
-// still need to "update the SRD bits for the current thread" whatever that means.
 void * mallocFromHeap(uint32_t size_in_bytes)
 {
     void * ptr = 0;
@@ -198,53 +197,6 @@ void * mallocFromHeap(uint32_t size_in_bytes)
     NVIC_MPU_NUMBER_R |= 0b110;                              // Let's look at region 6
     NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
     NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 6, shifts them into position, and writes to attribute register.
-
-    // if((ptr >= 0x20000000) && (ptr <= 0x20002000))
-    // {
-    //     uint32_t *ranger = 0x20000000;
-    //     uint8_t startingSubRegion = 0;
-    //     while(ranger < ptr)
-    //     {
-    //         ranger += 0x400;
-    //         startingSubRegion++;
-    //     }
-    //     // when we exit this loop, ranger should be pointing at the first subregion we need access to, and startingSubRegion should be the first subregion we need.
-    //     // loop through tcb[taskCurrent].srd for i<size_in_bytes and turn on each subregion's bit.
-    //     uint8_t i = 0;
-    //     for(i = 0; i < size_in_bytes; i++)
-    //     {
-            
-    //         tcb[taskCurrent].srd |= 
-    //     }
-    // }
-    // else if((ptr >= 0x20002001) && (ptr <= 0x20004000))
-    // {}
-    // else if((ptr >= 0x20004001) && (ptr <= 0x20006000))
-    // {}
-    // else if((ptr >= 0x20006001) && (ptr <= 0x20008000))
-    // {}
-
-
-    //find the subregions you need to enable
-        // find the starting subregion by locating ptr against the mpu regions
-                // mpu region 3 starts at 0x2000.0000 and ends at 0x2000.2000
-                // mpu region 4 starts at 0x2000.2000 and ends at 0x2000.4000
-                // mpu region 5 starts at 0x2000.4000 and ends at 0x2000.6000
-                // mpu region 6 starts at 0x2000.6000 and ends at 0x2000.8000
-
-        // Once you find the region, find it's subregion. ptr will be pointing at maybe 0x2000.347C for example. 
-        // This is in region 4. Region 4 is divided into 8 subregions of 1kB each. This ptr will be pointing at the 
-        // first subregion. That's the first one we will enable.
-        // Next, find out how many regions you will enable. Do this by looking at size_in_bytes. It should already be 
-        // sized for the number of whole 1kB subregions you need. Say size_in_bytes turned out to be 3.
-
-        // Finally, flip the corresponding subregions in tcb[currentTask].srd to ones. For our above example, we would end
-        // up with uint32_t srd = 1110.0000.0000.0000.0000.0000.0000.0000.
-
-        // If that doesn't make sense, call me. If I'm awake I'll try my best.
-
-
-
 
     return (void *)ptr;
 }
@@ -373,27 +325,17 @@ void initRtos()
 // REQUIRED: Implement prioritization to 8 levels
 int rtosScheduler()
 {
-    bool ok = false, foundHighestPrio = false;
-    static uint8_t task = 0xFF;
-    uint8_t highestPriority = 0, currentPriority = 0, i = 0;
-
+    uint8_t highestPriority = 8, currentPriority = 8, i = 0, task = 0;
     for(i = 0; i < MAX_TASKS; i++)
     {
         if(tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN)
             currentPriority = tcb[i].priority;
         
-        if(currentPriority > highestPriority)
+        if(currentPriority < highestPriority)
         {
             highestPriority = currentPriority;
+            task = i;
         }
-    }
-
-    while (!ok)
-    {
-        task++;
-        if (task >= MAX_TASKS) // resets task to 0 to allow recycling through the tcb array
-            task = 0;
-        //ok = (tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN);
     }
     return task;
 }
@@ -993,7 +935,7 @@ int main(void)
 
     // Add required idle process at lowest priority
     ok =  createThread(idle, "Idle", 7, 1024);
-    ok &=  createThread(idle2, "Idle2", 7, 1024);
+//    ok &=  createThread(idle2, "Idle2", 7, 1024);
 
     // Add other processes
 //    ok &= createThread(lengthyFn, "LengthyFn", 6, 1024);
@@ -1001,7 +943,7 @@ int main(void)
     ok &= createThread(oneshot, "OneShot", 2, 1024);
 //    ok &= createThread(readKeys, "ReadKeys", 6, 1024);
 //    ok &= createThread(debounce, "Debounce", 6, 1024);
-//    ok &= createThread(important, "Important", 0, 1024);
+    ok &= createThread(important, "Important", 0, 1024);
 //    ok &= createThread(uncooperative, "Uncoop", 6, 1024);
 //    ok &= createThread(errant, "Errant", 6, 1024);
 //    ok &= createThread(shell, "Shell", 6, 2048);
