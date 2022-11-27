@@ -151,7 +151,7 @@ void * mallocFromHeap(uint32_t size_in_bytes)
 void * mallocBandage(uint32_t size_in_bytes)
 {
     void * ptr = 0;
-    static uint32_t * heap = (uint32_t *)0x20001800;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
+    static uint32_t * heap = (uint32_t *)0x20002000;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
     size_in_bytes = (((size_in_bytes-1)/1024)+1)*1024;
     heap += (size_in_bytes / 4);
     if(heap >= (uint32_t *)0x20008000)
@@ -294,6 +294,8 @@ void initMpu(void)
 {
     // REQUIRED: call your MPU functions here
     allowBackgroundAccess();                        // Region 0 will be the background region
+    // allowFlashAccess();
+    // allowPeripheralAccess();
     setupSramAccess();                              // Setup SRAM memory regions 3-6    
     setPSP((uint32_t *)TOP_OF_SRAM);                // Set temporary PSP at the top of SRAM
     NVIC_MPU_NUMBER_R &= ~(0b111);                  // Clearing MPU targeting register
@@ -355,7 +357,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
     // REQUIRED:
     // store the thread name
     // allocate stack space and store top of stack in sp and spInit
-    void * ptr = mallocBandage(stackBytes) - 1;
+    uint32_t *ptr = (uint32_t *)mallocBandage(stackBytes) - 1;
     
     // add task if room in task list
     if (taskCount < MAX_TASKS)
@@ -619,7 +621,7 @@ void svCallIsr()
         {
             uint32_t *pointer = getPSP();
             uint32_t size = *(getPSP());
-            void * returnPtr = mallocBandage(size) - 1;
+            uint32_t *returnPtr = (uint32_t *)mallocBandage(size) - 1;
             *pointer = returnPtr;
             break;
         }
@@ -995,7 +997,7 @@ int main(void)
     ok &= createThread(readKeys, "ReadKeys", 6, 1024);
     ok &= createThread(debounce, "Debounce", 6, 1024);
     ok &= createThread(important, "Important", 0, 1024);
-    ok &= createThread(uncooperative, "Uncoop", 6, 1024);
+    // ok &= createThread(uncooperative, "Uncoop", 6, 1024);
 //    ok &= createThread(errant, "Errant", 6, 1024);
 //    ok &= createThread(shell, "Shell", 6, 2048);
 
