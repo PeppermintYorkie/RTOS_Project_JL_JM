@@ -67,10 +67,11 @@
 #define PB4     PORTC,6             // Off-board pushbutton 4
 #define PB5     PORTC,7             // Off-board pushbutton 5
 
-#define YIELD 0
-#define SLEEP 1
-#define WAIT  2
-#define POST  3
+#define YIELD   0
+#define SLEEP   1
+#define WAIT    2
+#define POST    3
+#define MALLOC  4
 
 #define TOP_OF_SRAM 0x20008000      // A macro for the top of SRAM memory
 
@@ -141,7 +142,13 @@ struct _tcb
 
 // TODO: add your malloc code here and update the SRD bits for the current thread 
 // mallocFromHeap() completed JL 11/13
+
 void * mallocFromHeap(uint32_t size_in_bytes)
+{
+    __asm("     SVC #4");
+}
+
+void * mallocBandage(uint32_t size_in_bytes)
 {
     void * ptr = 0;
     static uint32_t * heap = (uint32_t *)0x20001800;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
@@ -348,7 +355,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
     // REQUIRED:
     // store the thread name
     // allocate stack space and store top of stack in sp and spInit
-    void * ptr = mallocFromHeap(stackBytes) - 1;
+    void * ptr = mallocBandage(stackBytes) - 1;
     
     // add task if room in task list
     if (taskCount < MAX_TASKS)
@@ -376,6 +383,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
         }
     }
     // REQUIRED: allow tasks switches again
+    taskCurrent++;
     return ok;
 }
 
@@ -515,6 +523,32 @@ void pendSvIsr()
         fabricateContext(tcb[taskCurrent].pid);
         tcb[taskCurrent].state = STATE_READY;
     }
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 3 (first SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b011;                              // Let's look at region 3
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 3, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 4 (second SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b100;                              // Let's look at region 4
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 4, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 5 (third SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b101;                              // Let's look at region 5
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 5, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 6 (fourth SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b110;                              // Let's look at region 6
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 6, shifts them into position, and writes to attribute register.
 }
 
 // REQUIRED: modify this function to add support for the service call - JM, 11/14
@@ -527,16 +561,18 @@ void svCallIsr()
     // if SVC number is 1, sleep
     // if SVC number is 2, wait
     // if SVC number is 3, post
-
     uint32_t svcNum = extractSVC(getPSP());
 
     switch (svcNum)
     {
         case YIELD:
+        {
             // set pendsv bit
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
+        }
         case SLEEP:
+        {
             //set state of task to delayed
             //set tcb[taskCurrent].ticks to value passed in
             //set pendsv bit
@@ -544,7 +580,9 @@ void svCallIsr()
             tcb[taskCurrent].state = STATE_DELAYED;
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
+        }
         case WAIT:
+        {
             if(semaphores[*(getPSP())].count > 0)
             {
                 semaphores[*(getPSP())].count--;
@@ -558,7 +596,9 @@ void svCallIsr()
                 NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             }
             break;
+        }
         case POST:
+        {
             semaphores[*(getPSP())].count++;
             if(semaphores[*(getPSP())].queueSize > 0)
             {
@@ -574,9 +614,20 @@ void svCallIsr()
             }
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
+        }
+        case MALLOC:
+        {
+            uint32_t *pointer = getPSP();
+            uint32_t size = *(getPSP());
+            void * returnPtr = mallocBandage(size) - 1;
+            *pointer = returnPtr;
+            break;
+        }
         default:
+        {
             putsUart0("Invalid SVC number \r\n");
             break;
+        }
     }
 }
 
@@ -938,13 +989,13 @@ int main(void)
 //    ok &=  createThread(idle2, "Idle2", 7, 1024);
 
     // Add other processes
-//    ok &= createThread(lengthyFn, "LengthyFn", 6, 1024);
+    ok &= createThread(lengthyFn, "LengthyFn", 6, 1024);
     ok &= createThread(flash4Hz, "Flash4Hz", 4, 1024);
     ok &= createThread(oneshot, "OneShot", 2, 1024);
-//    ok &= createThread(readKeys, "ReadKeys", 6, 1024);
-//    ok &= createThread(debounce, "Debounce", 6, 1024);
+    ok &= createThread(readKeys, "ReadKeys", 6, 1024);
+    ok &= createThread(debounce, "Debounce", 6, 1024);
     ok &= createThread(important, "Important", 0, 1024);
-//    ok &= createThread(uncooperative, "Uncoop", 6, 1024);
+    ok &= createThread(uncooperative, "Uncoop", 6, 1024);
 //    ok &= createThread(errant, "Errant", 6, 1024);
 //    ok &= createThread(shell, "Shell", 6, 2048);
 
