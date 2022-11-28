@@ -87,7 +87,10 @@ void putsUart0(char* str)
 // Blocking function that returns with serial data once the buffer is not empty
 char getcUart0(void)
 {
-    while (UART0_FR_R & UART_FR_RXFE);               // wait if uart0 rx fifo empty
+    while (UART0_FR_R & UART_FR_RXFE)               // wait if uart0 rx fifo empty
+    {
+        __asm("    SVC #0");
+    }
     return UART0_DR_R & 0xFF;                        // get character from fifo
 }
 
