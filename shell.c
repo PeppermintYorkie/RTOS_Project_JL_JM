@@ -53,9 +53,8 @@ void parseFields(USER_DATA* info)
     // Numeric set: {0-9 = 48-57; - = 45; . = 46}
     // Delimiter set: {everything from 32-126 inclusive, not in previous sets}
 
-    char chr = 0;
-    uint8_t i = 0;
-    uint8_t arr_pos = 0;
+    char chr = 0, nchr = 0;
+    uint8_t i = 0, arr_pos = 0;
     info->fieldCount = 0;
 
     // make sure arrays are clean
@@ -69,8 +68,13 @@ void parseFields(USER_DATA* info)
     while((info->fieldCount < MAX_FIELDS) && (info->buffer[arr_pos] != 0))
     {
         chr = info->buffer[arr_pos];
+        nchr = info->buffer[arr_pos + 1];
 
-        if((chr >= 65 && chr <= 90) || (chr >= 97 && chr <= 122) || (chr == 95)) // Alpha
+        if(chr == 48 && nchr == 120)
+        {
+            //
+        }
+        else if((chr >= 65 && chr <= 90) || (chr >= 97 && chr <= 122) || (chr == 95)) // Alpha
         {
             // fill in fieldPosition and fieldType arrays using fieldCount
             // increment fieldCount

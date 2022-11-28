@@ -383,7 +383,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
         }
     }
     // REQUIRED: allow tasks switches again
-    taskCurrent++;
+    taskCurrent++; //------------------------HERE
     return ok;
 }
 
@@ -946,11 +946,160 @@ void important()
     }
 }
 
+//-----------------------------------------------------------------------------
+// Shell command functions
+//-----------------------------------------------------------------------------
+
+void pidof(const char* name)
+{
+    if (name != 0)
+    {
+        putsUart0(name);
+        putsUart0(" launched\n");
+    }
+}
+
+void sched(bool prio_on)
+{
+    if(prio_on)
+        putsUart0("sched prio\n");
+    else
+        putsUart0("sched rr\n");
+}
+
+void preempt(bool on)
+{
+    if(on)
+        putsUart0("preempt on\n");
+    else
+        putsUart0("preempt off\n");
+}
+
+void pmap(uint32_t pid)
+{
+    char numStr[11];
+    uint32_tToString(pid, numStr);
+    putsUart0("Memory usage by ");
+    putsUart0(numStr);
+    putsUart0(": \n");
+}
+
+void kill(uint32_t pid)
+{
+    char numStr[11];
+    uint32_tToString(pid, numStr);
+    putsUart0(numStr);
+    putsUart0(" killed\n");
+}
+
+void ipcs(void)
+{
+    putsUart0("IPCS called\n");
+}
+
+void ps(void)
+{
+    putsUart0("PS called\n");
+}
+
+void reboot(void)
+{
+    NVIC_APINT_R = NVIC_APINT_VECTKEY | NVIC_APINT_SYSRESETREQ;
+}
+
 // REQUIRED: add processing for the shell commands through the UART here
 void shell()
 {
-    while (true)
+    USER_DATA cmdLine;
+    while(true)
     {
+        putsUart0("\n>>");
+        getsUart0(&cmdLine);
+        parseFields(&cmdLine);
+        bool errMsg = false;
+
+        // for future reference: **************************************************************************************
+        // rewrite argument cases to account for all three potential argument types (alpha, numeric, and alpha-numeric)
+        // rewrite argument cases to include error message print statements for invalid arguments
+        if(isCommand(&cmdLine, "reboot", 0))
+        {
+            reboot();
+        }
+        else if(isCommand(&cmdLine, "ps", 0))
+        {
+            ps();
+        }
+        else if(isCommand(&cmdLine, "ipcs", 0))
+        {
+            ipcs();
+        }
+        else if(isCommand(&cmdLine, "kill", 1))
+        {
+            uint32_t pid = getFieldInteger(&cmdLine, 1);
+            kill(pid);
+        }
+        else if(isCommand(&cmdLine, "pmap", 1))
+        {
+            uint32_t pid = getFieldInteger(&cmdLine, 1);
+            pmap(pid);
+        }
+        else if(isCommand(&cmdLine, "preempt", 1))
+        {
+            char* arg = getFieldString(&cmdLine, 1);
+            bool on;
+
+            makeLowercase(arg);
+
+            if(strCmp(arg, "on"))
+            {
+                on = true;
+                preempt(on);
+            }
+            else if(strCmp(arg, "off"))
+            {
+                on = false;
+                preempt(on);
+            }
+            else
+                errMsg = true;
+        }
+        else if(isCommand(&cmdLine, "sched", 1))
+        {
+            char* arg = getFieldString(&cmdLine, 1);
+            bool prio_on;
+
+            makeLowercase(arg);
+
+            if(strCmp(arg, "prio"))
+            {
+                prio_on = true;
+                sched(prio_on);
+            }
+            else if(strCmp(arg, "rr"))
+            {
+                prio_on = false;
+                sched(prio_on);
+            }
+            else
+                errMsg = true;
+        }
+        else if(isCommand(&cmdLine, "pidof", 1))
+        {
+            const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
+            pidof(name);
+        }
+        else if(isCommand(&cmdLine, "run", 1))
+        {
+            const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
+            RED_LED = 1;
+        }
+        else
+        {
+            putsUart0("Invalid command.\n");
+        }
+
+        if(errMsg)
+            putsUart0("Invalid command.\n");
     }
 }
 
