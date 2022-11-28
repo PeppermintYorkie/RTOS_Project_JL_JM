@@ -340,7 +340,7 @@ int rtosScheduler()
         {
             for(i = 0; i < MAX_TASKS; i++)
             {
-                if((tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN) && i != taskCurrent)
+                if((tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN) && (i != taskCurrent) && (tcb[i].priority == prio))
                 {
                     found = true;
                     prioTask = i;
@@ -896,7 +896,7 @@ void lengthyFn()
 
     // Example of allocating memory from stack
     // This will show up in the pmap command for this thread
-    // p = mallocFromHeap(1024);
+     p = mallocFromHeap(1024);
 
     
     // char buffer[15] = {};
@@ -904,7 +904,7 @@ void lengthyFn()
     // putsUart0(buffer);
     // putsUart0("\n\r");
 
-    // *p = 0;
+     *p = 0;
 
     while(true)
     {
@@ -1051,7 +1051,7 @@ int main(void)
     createSemaphore(resource, 1);
 
     // Add required idle process at lowest priority
-    ok =  createThread(idle, "Idle", 0, 1024);
+    ok =  createThread(idle, "Idle", 7, 1024);
 //    ok &=  createThread(idle2, "Idle2", 0, 1024);
 
     // Add other processes
@@ -1061,8 +1061,8 @@ int main(void)
     ok &= createThread(readKeys, "ReadKeys", 6, 1024);
     ok &= createThread(debounce, "Debounce", 6, 1024);
     ok &= createThread(important, "Important", 0, 1024);
-    ok &= createThread(uncooperative, "Uncoop", 6, 1024);
-    ok &= createThread(errant, "Errant", 6, 1024);
+    // ok &= createThread(uncooperative, "Uncoop", 6, 1024);
+    // ok &= createThread(errant, "Errant", 6, 1024);
 //    ok &= createThread(shell, "Shell", 6, 2048);
 
     // Start up RTOS
