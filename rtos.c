@@ -330,7 +330,7 @@ void initRtos()
 // REQUIRED: Implement prioritization to 8 levels
 int rtosScheduler()
 {
-    static uint8_t prioTask = 0xFF, task = 0xFF;
+    static uint8_t task = 0xFF;
     bool ok;
     if(priority)
     {
@@ -367,27 +367,9 @@ int rtosScheduler()
             prio++;
             if(prio == 8)
                 prio = 0;
-
-
-
-            // old prio shizzz
-            // for(i = 0; (i < MAX_TASKS) && (!found); i++)
-            // {
-            //     if((tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN) && (i != taskCurrent) && (tcb[i].priority == prio))
-            //     {
-            //         found = true;
-            //         prioTask = i;
-            //     }
-            // }
-            // prio++;
-            // if(prio == 8)
-            // {
-            //     found = true;
-            //     prioTask = taskCurrent;
-            // }
         }
-        // task = prioTask;
     }
+
     else
     {
         ok = false;
