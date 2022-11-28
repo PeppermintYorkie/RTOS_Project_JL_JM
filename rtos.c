@@ -331,32 +331,65 @@ void initRtos()
 int rtosScheduler()
 {
     static uint8_t prioTask = 0xFF, task = 0xFF;
+    bool ok;
     if(priority)
     {
         bool found = false;
+        ok = false;
         uint8_t i = 0;
         uint8_t prio = 0;
+        uint8_t prioTaskArr[MAX_TASKS] = {0};
         while(!found)
         {
+            // Let's count our priority tasks
+            uint8_t prioTaskCount = 0;
             for(i = 0; i < MAX_TASKS; i++)
             {
-                if((tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN) && (i != taskCurrent) && (tcb[i].priority == prio))
+                if(tcb[i].priority == prio && (tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN))
                 {
+                    prioTaskCount++;
+                    prioTaskArr[i] = 1;
+                }
+            }
+
+            // Round robin through priority array
+            while(!ok && (prioTaskCount != 0))
+            {
+                task++;
+                if(task >= MAX_TASKS)
+                    task = 0;
+                if(prioTaskArr[task] == 1)
+                {
+                    ok = true;
                     found = true;
-                    prioTask = i;
                 }
             }
             prio++;
             if(prio == 8)
-            {
-                found = true;
-            }
+                prio = 0;
+
+
+
+            // old prio shizzz
+            // for(i = 0; (i < MAX_TASKS) && (!found); i++)
+            // {
+            //     if((tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN) && (i != taskCurrent) && (tcb[i].priority == prio))
+            //     {
+            //         found = true;
+            //         prioTask = i;
+            //     }
+            // }
+            // prio++;
+            // if(prio == 8)
+            // {
+            //     found = true;
+            //     prioTask = taskCurrent;
+            // }
         }
-        task = prioTask;
+        // task = prioTask;
     }
     else
     {
-        bool ok;
         ok = false;
         while (!ok)
         {
@@ -534,8 +567,8 @@ void systickIsr()
             }
         }
     }
-    // if(taskCount != 0 && preemption)
-    //     NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
+    if(taskCount != 0 && preemption)
+        NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
 }
 
 // REQUIRED: in coop and preemptive, modify this function to add support for task switching - JM, 11/14
@@ -669,7 +702,7 @@ void svCallIsr()
                 {
                     semaphores[*(getPSP())].processQueue[i] = semaphores[*(getPSP())].processQueue[i+1];
                 }
-                semaphores[*(getPSP())].count--;
+                 semaphores[*(getPSP())].count--;
             }
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
@@ -747,6 +780,30 @@ void usageFaultIsr()
 //-----------------------------------------------------------------------------
 // Subroutines
 //-----------------------------------------------------------------------------
+
+void danceBattle()
+{
+    setPinValue(ORANGE_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(YELLOW_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(GREEN_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(RED_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(BLUE_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(ORANGE_LED,0);
+    waitMicrosecond(100000);
+    setPinValue(YELLOW_LED,0);
+    waitMicrosecond(100000);
+    setPinValue(GREEN_LED,0);
+    waitMicrosecond(100000);
+    setPinValue(RED_LED,0);
+    waitMicrosecond(100000);
+    setPinValue(BLUE_LED,0);
+    waitMicrosecond(100000);
+}
 
 // Initialize Hardware
 // REQUIRED: Add initialization for blue, orange, red, green, and yellow LEDs
@@ -982,6 +1039,7 @@ void uncooperative()
     {
         while (readPbs() == 8)
         {
+            // danceBattle();
         }
         yield();
     }
@@ -1061,7 +1119,7 @@ int main(void)
     ok &= createThread(readKeys, "ReadKeys", 6, 1024);
     ok &= createThread(debounce, "Debounce", 6, 1024);
     ok &= createThread(important, "Important", 0, 1024);
-    // ok &= createThread(uncooperative, "Uncoop", 6, 1024);
+    ok &= createThread(uncooperative, "Uncoop", 6, 1024);
     // ok &= createThread(errant, "Errant", 6, 1024);
 //    ok &= createThread(shell, "Shell", 6, 2048);
 
