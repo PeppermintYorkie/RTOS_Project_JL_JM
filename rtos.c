@@ -119,6 +119,9 @@ semaphore semaphores[MAX_SEMAPHORES];
 uint8_t taskCurrent = 0;   // index of last dispatched task
 uint8_t taskCount = 0;     // total number of valid tasks
 
+bool preemption = true;
+bool priority = true;
+
 // REQUIRED: add store and management for the memory used by the thread stacks
 //           thread stacks must start on 1 kiB boundaries so mpu can work correctly
 
@@ -151,7 +154,7 @@ void * mallocFromHeap(uint32_t size_in_bytes)
 void * mallocBandage(uint32_t size_in_bytes)
 {
     void * ptr = 0;
-    static uint32_t * heap = (uint32_t *)0x20001800;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
+    static uint32_t * heap = (uint32_t *)0x20002000;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
     size_in_bytes = (((size_in_bytes-1)/1024)+1)*1024;
     heap += (size_in_bytes / 4);
     if(heap >= (uint32_t *)0x20008000)
@@ -294,6 +297,8 @@ void initMpu(void)
 {
     // REQUIRED: call your MPU functions here
     allowBackgroundAccess();                        // Region 0 will be the background region
+    // allowFlashAccess();
+    // allowPeripheralAccess();
     setupSramAccess();                              // Setup SRAM memory regions 3-6    
     setPSP((uint32_t *)TOP_OF_SRAM);                // Set temporary PSP at the top of SRAM
     NVIC_MPU_NUMBER_R &= ~(0b111);                  // Clearing MPU targeting register
@@ -319,29 +324,61 @@ void initRtos()
         tcb[i].state = STATE_INVALID;
         tcb[i].pid = 0;
     }
-
-    // initialize systick for 1ms system timer
-    NVIC_ST_CTRL_R |= NVIC_ST_CTRL_CLK_SRC | NVIC_ST_CTRL_INTEN | NVIC_ST_CTRL_ENABLE;
-    NVIC_ST_RELOAD_R = 39999; // 1ms reload value, ***look at this again***
-                              // probably because we're using the 40MHz clock, so since we want 1ms, 
-                              // we need 40,000 ticks because 40,000,000/1000 = 40,000
-                              // we use 40000-1 = 39999 because the reload value needs to be
-                              // 1 less than the number of ticks (datasheet pg 140)
 }
+   
 
 // REQUIRED: Implement prioritization to 8 levels
 int rtosScheduler()
 {
-    uint8_t highestPriority = 8, currentPriority = 8, i = 0, task = 0;
-    for(i = 0; i < MAX_TASKS; i++)
+    static uint8_t task = 0xFF;
+    bool ok;
+    if(priority)
     {
-        if(tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN)
-            currentPriority = tcb[i].priority;
-        
-        if(currentPriority < highestPriority)
+        bool found = false;
+        ok = false;
+        uint8_t i = 0;
+        uint8_t prio = 0;
+        uint8_t prioTaskArr[MAX_TASKS] = {0};
+        while(!found)
         {
-            highestPriority = currentPriority;
-            task = i;
+            // Let's count our priority tasks
+            uint8_t prioTaskCount = 0;
+            for(i = 0; i < MAX_TASKS; i++)
+            {
+                if(tcb[i].priority == prio && (tcb[i].state == STATE_READY || tcb[i].state == STATE_UNRUN))
+                {
+                    prioTaskCount++;
+                    prioTaskArr[i] = 1;
+                }
+            }
+
+            // Round robin through priority array
+            while(!ok && (prioTaskCount != 0))
+            {
+                task++;
+                if(task >= MAX_TASKS)
+                    task = 0;
+                if(prioTaskArr[task] == 1)
+                {
+                    ok = true;
+                    found = true;
+                }
+            }
+            prio++;
+            if(prio == 8)
+                prio = 0;
+        }
+    }
+
+    else
+    {
+        ok = false;
+        while (!ok)
+        {
+            task++;
+            if (task >= MAX_TASKS)
+                task = 0;
+            ok = (tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN);
         }
     }
     return task;
@@ -355,7 +392,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
     // REQUIRED:
     // store the thread name
     // allocate stack space and store top of stack in sp and spInit
-    void * ptr = mallocBandage(stackBytes) - 1;
+    uint32_t *ptr = (uint32_t *)mallocBandage(stackBytes) - 1;
     
     // add task if room in task list
     if (taskCount < MAX_TASKS)
@@ -417,6 +454,41 @@ void makeRtosGreatAgain()
 {
     // This is where we enable the memory windows and shit. Step 10 or w/e, later.
     _fn funk = (_fn)tcb[taskCurrent].pid;
+     // initialize systick for 1ms system timer
+    NVIC_ST_CTRL_R |= NVIC_ST_CTRL_CLK_SRC | NVIC_ST_CTRL_INTEN | NVIC_ST_CTRL_ENABLE;
+    NVIC_ST_RELOAD_R = 39999; // 1ms reload value, ***look at this again***
+                              // probably because we're using the 40MHz clock, so since we want 1ms, 
+                              // we need 40,000 ticks because 40,000,000/1000 = 40,000
+                              // we use 40000-1 = 39999 because the reload value needs to be
+                              // 1 less than the number of ticks (datasheet pg 140)
+
+    uint32_t srdBits = tcb[taskCurrent].srd;
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 3 (first SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b011;                              // Let's look at region 3
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 3, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 4 (second SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b100;                              // Let's look at region 4
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 4, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 5 (third SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b101;                              // Let's look at region 5
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 5, shifts them into position, and writes to attribute register.
+
+    srdBits = srdBits >> 8;                                 // Banish the bits we are done with!
+
+    NVIC_MPU_NUMBER_R &= ~(0b111);                          // Setting SRD bits for region 6 (fourth SRAM region)
+    NVIC_MPU_NUMBER_R |= 0b110;                              // Let's look at region 6
+    NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
+    NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 6, shifts them into position, and writes to attribute register.
     setTMPLbit();
     (*funk)();
 }
@@ -477,6 +549,8 @@ void systickIsr()
             }
         }
     }
+    if(taskCount != 0 && preemption)
+        NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
 }
 
 // REQUIRED: in coop and preemptive, modify this function to add support for task switching - JM, 11/14
@@ -610,7 +684,7 @@ void svCallIsr()
                 {
                     semaphores[*(getPSP())].processQueue[i] = semaphores[*(getPSP())].processQueue[i+1];
                 }
-                semaphores[*(getPSP())].count--;
+                 semaphores[*(getPSP())].count--;
             }
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
@@ -619,7 +693,7 @@ void svCallIsr()
         {
             uint32_t *pointer = getPSP();
             uint32_t size = *(getPSP());
-            void * returnPtr = mallocBandage(size) - 1;
+            uint32_t *returnPtr = (uint32_t *)mallocBandage(size) - 256;
             *pointer = returnPtr;
             break;
         }
@@ -688,6 +762,30 @@ void usageFaultIsr()
 //-----------------------------------------------------------------------------
 // Subroutines
 //-----------------------------------------------------------------------------
+
+void danceBattle()
+{
+    setPinValue(ORANGE_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(YELLOW_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(GREEN_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(RED_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(BLUE_LED,1);
+    waitMicrosecond(100000);
+    setPinValue(ORANGE_LED,0);
+    waitMicrosecond(100000);
+    setPinValue(YELLOW_LED,0);
+    waitMicrosecond(100000);
+    setPinValue(GREEN_LED,0);
+    waitMicrosecond(100000);
+    setPinValue(RED_LED,0);
+    waitMicrosecond(100000);
+    setPinValue(BLUE_LED,0);
+    waitMicrosecond(100000);
+}
 
 // Initialize Hardware
 // REQUIRED: Add initialization for blue, orange, red, green, and yellow LEDs
@@ -837,8 +935,15 @@ void lengthyFn()
 
     // Example of allocating memory from stack
     // This will show up in the pmap command for this thread
-    p = mallocFromHeap(1024);
-    *p = 0;
+     p = mallocFromHeap(1024);
+
+    
+    // char buffer[15] = {};
+    // uint32_tToHexString((uint32_t)p,buffer);
+    // putsUart0(buffer);
+    // putsUart0("\n\r");
+
+     *p = 0;
 
     while(true)
     {
@@ -916,6 +1021,7 @@ void uncooperative()
     {
         while (readPbs() == 8)
         {
+            // danceBattle();
         }
         yield();
     }
@@ -1104,7 +1210,7 @@ void shell()
 }
 
 //-----------------------------------------------------------------------------
-// Main
+// MainF
 //-----------------------------------------------------------------------------
 
 int main(void)
@@ -1135,7 +1241,7 @@ int main(void)
 
     // Add required idle process at lowest priority
     ok =  createThread(idle, "Idle", 7, 1024);
-//    ok &=  createThread(idle2, "Idle2", 7, 1024);
+//    ok &=  createThread(idle2, "Idle2", 0, 1024);
 
     // Add other processes
     ok &= createThread(lengthyFn, "LengthyFn", 6, 1024);
@@ -1145,7 +1251,7 @@ int main(void)
     ok &= createThread(debounce, "Debounce", 6, 1024);
     ok &= createThread(important, "Important", 0, 1024);
     ok &= createThread(uncooperative, "Uncoop", 6, 1024);
-//    ok &= createThread(errant, "Errant", 6, 1024);
+    // ok &= createThread(errant, "Errant", 6, 1024);
 //    ok &= createThread(shell, "Shell", 6, 2048);
 
     // Start up RTOS
