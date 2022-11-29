@@ -67,11 +67,22 @@
 #define PB4     PORTC,6             // Off-board pushbutton 4
 #define PB5     PORTC,7             // Off-board pushbutton 5
 
-#define YIELD   0
-#define SLEEP   1
-#define WAIT    2
-#define POST    3
-#define MALLOC  4
+#define YIELD       0
+#define SLEEP       1
+#define WAIT        2
+#define POST        3
+#define MALLOC      4
+#define REBOOT      5
+#define PS          6
+#define IPCS        7
+#define PREEMPT_ON  8
+#define PREEMPT_OFF 9
+#define SCHED_PRIO  10
+#define SCHED_RR    11
+#define PIDOF       12
+#define PMAP        13
+#define KILL        14
+#define RUN         15
 
 #define TOP_OF_SRAM 0x20008000      // A macro for the top of SRAM memory
 
@@ -136,6 +147,7 @@ struct _tcb
     uint32_t srd;                  // MPU subregion disable bits (one per 1 KiB)
     char name[16];                 // name of task used in ps command
     void *semaphore;               // pointer to the semaphore that is blocking the thread
+    uint32_t sysTime;              // system time when thread was running
 } tcb[MAX_TASKS];
 
 
@@ -325,13 +337,13 @@ void initRtos()
         tcb[i].pid = 0;
     }
 }
-   
 
 // REQUIRED: Implement prioritization to 8 levels
 int rtosScheduler()
 {
     static uint8_t task = 0xFF;
     bool ok;
+    tcb[taskCurrent].sysTime += TIMER1_TAV_R;
     if(priority)
     {
         bool found = false;
@@ -369,7 +381,6 @@ int rtosScheduler()
                 prio = 0;
         }
     }
-
     else
     {
         ok = false;
@@ -381,6 +392,7 @@ int rtosScheduler()
             ok = (tcb[task].state == STATE_READY || tcb[task].state == STATE_UNRUN);
         }
     }
+    TIMER1_TAV_R = 0;   // Reset the CPU timer
     return task;
 }
 
@@ -420,7 +432,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
         }
     }
     // REQUIRED: allow tasks switches again
-    taskCurrent++; //------------------------HERE
+    taskCurrent++;
     return ok;
 }
 
@@ -490,6 +502,7 @@ void makeRtosGreatAgain()
     NVIC_MPU_ATTR_R &= ~(0x000000FF << 8);                        //Disable unneeded subregions
     NVIC_MPU_ATTR_R |= ((0xFF & srdBits) << 8);             // Grabs the SRD bits for region 6, shifts them into position, and writes to attribute register.
     setTMPLbit();
+    TIMER1_TAV_R = 0;   // Reset the CPU timer
     (*funk)();
 }
 
@@ -684,7 +697,7 @@ void svCallIsr()
                 {
                     semaphores[*(getPSP())].processQueue[i] = semaphores[*(getPSP())].processQueue[i+1];
                 }
-                 semaphores[*(getPSP())].count--;
+                semaphores[*(getPSP())].count--;
             }
             NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             break;
@@ -695,6 +708,65 @@ void svCallIsr()
             uint32_t size = *(getPSP());
             uint32_t *returnPtr = (uint32_t *)mallocBandage(size) - 256;
             *pointer = returnPtr;
+            break;
+        }
+        case REBOOT:
+        {
+            NVIC_APINT_R = NVIC_APINT_VECTKEY | NVIC_APINT_SYSRESETREQ;
+            break;
+        }
+        case PS:
+        {
+            //
+            break;
+        }
+        case IPCS:
+        {
+            //
+            break;
+        }
+        case PREEMPT_ON:
+        {
+            preemption = true;
+            putsUart0("Preemption ON\r\n");
+            break;
+        }
+        case PREEMPT_OFF:
+        {
+            preemption = false;
+            putsUart0("Preemption OFF\r\n");
+            break;
+        }
+        case SCHED_PRIO:
+        {
+            priority = true;
+            putsUart0("Priority scheduling enabled\r\n");
+            break;
+        }
+        case SCHED_RR:
+        {
+            priority = false;
+            putsUart0("Round Robin scheduling enabled\r\n");
+            break;
+        }
+        case PIDOF:
+        {
+            //
+            break;
+        }
+        case PMAP:
+        {
+            //
+            break;
+        }
+        case KILL:
+        {
+            //
+            break;
+        }
+        case RUN:
+        {
+            //
             break;
         }
         default:
@@ -846,6 +918,12 @@ void initHw()
     enablePinPullup(PB4);
     enablePinPullup(PB5);
 
+    // Configure CPU Timer
+    TIMER1_CTL_R &= ~TIMER_CTL_TAEN;                                    // turn-off timer before reconfiguring
+    TIMER1_CFG_R = TIMER_CFG_32_BIT_TIMER;                              // configure as 32-bit timer (A+B)
+    TIMER1_TAMR_R |= TIMER_TAMR_TACDIR | TIMER_TAMR_TAMR_PERIOD;        // configure for periodic mode (count up)
+    TIMER1_TAILR_R = TIMER_TAILR_M;                                     // set max load value
+    TIMER1_CTL_R |= TIMER_CTL_TAEN;                                     // turn-on timer
 }
 
 // REQUIRED: add code to return a value from 0-63 indicating which of 6 PBs are pressed - DONE JL 10/29
@@ -1065,22 +1143,6 @@ void pidof(const char* name)
     }
 }
 
-void sched(bool prio_on)
-{
-    if(prio_on)
-        putsUart0("sched prio\n");
-    else
-        putsUart0("sched rr\n");
-}
-
-void preempt(bool on)
-{
-    if(on)
-        putsUart0("preempt on\n");
-    else
-        putsUart0("preempt off\n");
-}
-
 void pmap(uint32_t pid)
 {
     char numStr[11];
@@ -1108,11 +1170,6 @@ void ps(void)
     putsUart0("PS called\n");
 }
 
-void reboot(void)
-{
-    NVIC_APINT_R = NVIC_APINT_VECTKEY | NVIC_APINT_SYSRESETREQ;
-}
-
 // REQUIRED: add processing for the shell commands through the UART here
 void shell()
 {
@@ -1124,80 +1181,63 @@ void shell()
         parseFields(&cmdLine);
         bool errMsg = false;
 
-        // for future reference: **************************************************************************************
-        // rewrite argument cases to account for all three potential argument types (alpha, numeric, and alpha-numeric)
+        // for future reference: ****************************************************************
         // rewrite argument cases to include error message print statements for invalid arguments
-        if(isCommand(&cmdLine, "reboot", 0))
+        if(isCommand(&cmdLine, "reboot", 0)) //----------------------------------------------------------------------DONE
         {
-            reboot();
+            __asm("  SVC #5");
         }
-        else if(isCommand(&cmdLine, "ps", 0))
+        else if(isCommand(&cmdLine, "ps", 0))   // displays process/thread status ------------------------PRIV
         {
-            ps();
+            //ps();
         }
-        else if(isCommand(&cmdLine, "ipcs", 0))
+        else if(isCommand(&cmdLine, "ipcs", 0)) // displays inter-process/thread communication status ----PRIV
         {
-            ipcs();
+            //ipcs();
         }
-        else if(isCommand(&cmdLine, "kill", 1))
+        else if(isCommand(&cmdLine, "kill", 1)) // kills a process/thread --------------------------------PRIV
         {
-            uint32_t pid = getFieldInteger(&cmdLine, 1);
-            kill(pid);
+            //uint32_t pid = getFieldInteger(&cmdLine, 1);
+            //kill(pid);
         }
-        else if(isCommand(&cmdLine, "pmap", 1))
+        else if(isCommand(&cmdLine, "pmap", 1)) // displays memory usage of a process/thread -------------PRIV
         {
-            uint32_t pid = getFieldInteger(&cmdLine, 1);
-            pmap(pid);
+            //uint32_t pid = getFieldInteger(&cmdLine, 1);
+            //pmap(pid);
         }
-        else if(isCommand(&cmdLine, "preempt", 1))
+        else if(isCommand(&cmdLine, "preempt", 1)) // enables/disables preemption------------------------------------DONE
         {
             char* arg = getFieldString(&cmdLine, 1);
-            bool on;
-
             makeLowercase(arg);
 
             if(strCmp(arg, "on"))
-            {
-                on = true;
-                preempt(on);
-            }
+                __asm("  SVC #8");
             else if(strCmp(arg, "off"))
-            {
-                on = false;
-                preempt(on);
-            }
+                __asm("  SVC #9");
             else
                 errMsg = true;
         }
-        else if(isCommand(&cmdLine, "sched", 1))
+        else if(isCommand(&cmdLine, "sched", 1)) // selects prio/rr scheduling---------------------------------------DONE
         {
             char* arg = getFieldString(&cmdLine, 1);
-            bool prio_on;
-
             makeLowercase(arg);
 
             if(strCmp(arg, "prio"))
-            {
-                prio_on = true;
-                sched(prio_on);
-            }
+                __asm("  SVC #10");
             else if(strCmp(arg, "rr"))
-            {
-                prio_on = false;
-                sched(prio_on);
-            }
+                __asm("  SVC #11");
             else
                 errMsg = true;
         }
-        else if(isCommand(&cmdLine, "pidof", 1))
+        else if(isCommand(&cmdLine, "pidof", 1)) // displays pid of a process/thread ----------------------PRIV
         {
-            const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
-            pidof(name);
+            //const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
+            //pidof(name);
         }
-        else if(isCommand(&cmdLine, "run", 1))
+        else if(isCommand(&cmdLine, "run", 1)) // runs a program/process/thread ---------------------------PRIV
         {
-            const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
-            RED_LED = 1;
+            //const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
+            //RED_LED = 1;
         }
         else
         {
@@ -1210,7 +1250,7 @@ void shell()
 }
 
 //-----------------------------------------------------------------------------
-// MainF
+// Main
 //-----------------------------------------------------------------------------
 
 int main(void)

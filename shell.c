@@ -64,15 +64,25 @@ void parseFields(USER_DATA* info)
         info->fieldType[i] = 0;
     }
 
-    // write combined alpha-numeric case ********************************************************************
+    // parse fields
     while((info->fieldCount < MAX_FIELDS) && (info->buffer[arr_pos] != 0))
     {
         chr = info->buffer[arr_pos];
         nchr = info->buffer[arr_pos + 1];
 
-        if(chr == 48 && nchr == 120)
+        if(chr == 48 && nchr == 120) // Hex
         {
-            //
+            info->fieldPosition[info->fieldCount] = arr_pos;
+            info->fieldType[info->fieldCount] = 'h';
+            (info->fieldCount)++;
+
+            arr_pos += 2;
+            chr = info->buffer[arr_pos];
+            while(((chr >= 65 && chr <= 70) || (chr >= 97 && <= 102) || (chr >= 48 && chr <= 57)) && (chr != 0))
+            {
+                arr_pos++;
+                chr = info->buffer[arr_pos];
+            }
         }
         else if((chr >= 65 && chr <= 90) || (chr >= 97 && chr <= 122) || (chr == 95)) // Alpha
         {
@@ -84,19 +94,19 @@ void parseFields(USER_DATA* info)
             info->fieldType[info->fieldCount] = 'a'; // could use 97
             (info->fieldCount)++;
 
-            while(((chr >= 65 && chr <= 90) || (chr >= 97 && chr <= 122)) && (info->buffer[arr_pos] != 0))
+            while(((chr >= 65 && chr <= 90) || (chr >= 97 && chr <= 122)) && (chr != 0))
             {
                 arr_pos++;
                 chr = info->buffer[arr_pos];
             }
         }
-        else if((chr == 45) || (chr == 46) || (chr >= 48 && chr <= 57)) // Numeric
+        else if(((chr == 45) || (chr == 46) || (chr >= 48 && chr <= 57)) && !(chr == 48 && nchr == 120)) // Numeric, not a hex string
         {
             info->fieldPosition[info->fieldCount] = arr_pos;
             info->fieldType[info->fieldCount] = 'n'; // could use 110
             (info->fieldCount)++;
 
-            while(((chr == 45) || (chr == 46) || (chr >= 48 && chr <= 57)) && (info->buffer[arr_pos] != 0))
+            while(((chr == 45) || (chr == 46) || (chr >= 48 && chr <= 57)) && (chr != 0))
             {
                 arr_pos++;
                 chr = info->buffer[arr_pos];
@@ -105,7 +115,6 @@ void parseFields(USER_DATA* info)
         else // Delimiter
         {
             // convert to null and increment arr_pos
-
             info->buffer[arr_pos] = 0;
             arr_pos++;
         }
@@ -419,7 +428,26 @@ void uint32_tToString(uint32_t num, char* numStr)
     return;
 }
 
-void uint32_tToHexString(uint32_t num, char* numStr)
+uint32_t hexStringToUint32_t(char *str)
+{
+    uint8_t i, digit;
+    uint32_t result = 0;
+
+    for (i = 2; i < 10; i++)
+    {
+        result <<= 4;
+        digit = *str++;
+        if (digit >= '0' && digit <= '9')
+            result += digit - '0';
+        else if (digit >= 'a' && digit <= 'f')
+            result += digit - 'a' + 10;
+        else if (digit >= 'A' && digit <= 'F')
+            result += digit - 'A' + 10;
+    }
+    return result;
+}
+
+void uint32_tToHexString(uint32_t num, char *numStr)
 {
     char hexVals[16] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
     uint8_t shiftVal = 28;
