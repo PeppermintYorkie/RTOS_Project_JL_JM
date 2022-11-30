@@ -119,12 +119,15 @@ semaphore semaphores[MAX_SEMAPHORES];
 #define flashReq 3
 #define resource 4
 
+char PID_Directory[MAX_TASKS][16];
+
 // task
 #define STATE_INVALID    0 // no task
 #define STATE_UNRUN      1 // task has never been run
 #define STATE_READY      2 // has run, can resume at any time
 #define STATE_DELAYED    3 // has run, but now awaiting timer
 #define STATE_BLOCKED    4 // has run, but now blocked by semaphore
+#define STATE_DEAD       5 // has been MOIDAHED. Tragic. Very sad. 
 
 #define MAX_TASKS 12       // maximum number of valid tasks
 uint8_t taskCurrent = 0;   // index of last dispatched task
@@ -439,6 +442,11 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
 // REQUIRED: modify this function to restart a thread
 void restartThread(_fn fn)
 {
+    // Set prio to original prio (huh?)
+
+    // sp gets spinit
+
+    // set state to unrun
 }
 
 // REQUIRED: modify this function to stop a thread
@@ -446,6 +454,14 @@ void restartThread(_fn fn)
 // NOTE: see notes in class for strategies on whether stack is freed or not
 void stopThread(_fn fn)
 {
+    // If state is delayed, remove from any semaphores it is waiting on.
+        // if(delayed) remove from queue, decrement queue count
+
+    // Free any malloc'd memory. Still working on logic for this one... Don't forget to update the SRD map.
+    
+    // Set state to dead. 
+    
+    // 
 }
 
 // REQUIRED: modify this function to set a thread priority
