@@ -147,6 +147,7 @@ struct _tcb
     void *spInit;                  // original top of stack
     void *sp;                      // current stack pointer
     int8_t priority;               // 0=highest to 7=lowest
+    int8_t originalPrio;           // Needed when restarting a thread.
     uint32_t ticks;                // ticks until sleep complete
     uint32_t srd;                  // MPU subregion disable bits (one per 1 KiB)
     char name[16];                 // name of task used in ps command
@@ -428,6 +429,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
             tcb[i].sp = ptr;                        // set tcb[i].sp = ptr 11/13 JL
             tcb[i].spInit = ptr;                    // set tcb[i].spInit = ptr 11/13 JL
             tcb[i].priority = priority;
+            tcb[i].originalPrio = priority;
             // tcb[i].srd = 0;
             strCopy(tcb[i].name, name);
             // increment task count
@@ -443,11 +445,17 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
 // REQUIRED: modify this function to restart a thread
 void restartThread(_fn fn)
 {
+    uint8_t i = 0;
+    while(tcb[i].pid != fn)
+        i++;
     // Set prio to original prio (huh?)
+    tcb[i].priority = tcb[i].originalPrio;
 
     // sp gets spinit
+    tcb[i].sp = tcb[i].spInit;
 
     // set state to unrun
+    tcb[i].state = STATE_UNRUN;
 }
 
 // REQUIRED: modify this function to stop a thread
@@ -455,19 +463,86 @@ void restartThread(_fn fn)
 // NOTE: see notes in class for strategies on whether stack is freed or not
 void stopThread(_fn fn)
 {
+    uint8_t i = 0;
+    while(tcb[i].pid != fn)
+        i++;
     // If state is delayed, remove from any semaphores it is waiting on.
-        // if(delayed) remove from queue, decrement queue count
+    if(tcb[i].state == STATE_DELAYED)
+    {
+        tcb[i].semaphore;       // Need some clarity on semaphore...
+    }
 
     // Free any malloc'd memory. Still working on logic for this one... Don't forget to update the SRD map.
-    
+        // Any thread with more than one SRD bit set will have had to malloc the second or more.
+        // Free all but first SRD bit. Booyah.
+        tcb[i].srd = freeHeap(tcb[i].srd);
     // Set state to dead. 
+    tcb[i].state = STATE_DEAD;
     
     // 
+}
+
+// This free is a sham. It will only work insofar as we have a single function capable of
+// mallocing a single heap, and if any more than that are introduced this will stop working.
+// Further, if any task asks for a stack that is bigger than 1 page, this breaks.
+// Next time, ask for a memory management unit before the project is due in a week. 
+// User discretion is advised.
+
+uint32_t freeHeap(uint32_t srdBits)
+{
+    // Determine the number of srd bits:
+    uint8_t i = 0;
+    uint8_t count = 0;
+    uint32_t dalek = 0;
+    uint32_t temp = srdBits;
+    for(i = 0; i < 32; i++)
+    {
+        if(temp & 1 != 0)
+            count++;
+        temp = temp >> 1;
+    }
+
+    if(count > 1)
+    {
+        // Heap detected. First srd bit found is stack, everything else must go.
+        i = 0;
+        temp = srdBits;
+        while(temp & 1 == 0)
+        {
+            i++;
+            temp = temp >> 1;
+        }
+        
+        // Stack bit detected. Finding and clearing heap bits.
+        while(temp != 0)
+        {
+            i++;
+            temp = temp >> 1;
+            if(temp & 1 == 1)
+            {
+                // Heap bit detected. Exterminate! Exterminate! Exterminate!
+                dalek = 1 << i;
+                srdBits = (srdBits & ~dalek);
+
+                // We have killed a heap. Let's decrement global heap var
+                heap -= 1024;
+            }
+        }       
+    }
+    else
+    {
+        // Do nothing, no heap detected.
+    }
+    return srdBits;
 }
 
 // REQUIRED: modify this function to set a thread priority
 void setThreadPriority(_fn fn, uint8_t priority)
 {
+    uint8_t i = 0;
+    while(tcb[i].pid != fn)
+        i++;
+    tcb[i].priority = priority;
 }
 
 bool createSemaphore(uint8_t semaphore, uint8_t count)
@@ -695,7 +770,7 @@ void svCallIsr()
             {
                 semaphores[*(getPSP())].processQueue[semaphores[*(getPSP())].queueSize] = taskCurrent;
                 semaphores[*(getPSP())].queueSize++;
-                //tcb[taskCurrent].semaphore = getPSP();
+                tcb[taskCurrent].semaphore = getPSP();
                 tcb[taskCurrent].state = STATE_BLOCKED;
                 NVIC_INT_CTRL_R |= NVIC_INT_CTRL_PEND_SV;
             }
@@ -707,7 +782,7 @@ void svCallIsr()
             if(semaphores[*(getPSP())].queueSize > 0)
             {
                 tcb[semaphores[*(getPSP())].processQueue[0]].state = STATE_READY;
-                //tcb[semaphores[*(getPSP())].processQueue[0]].semaphore = 0; //?
+                tcb[semaphores[*(getPSP())].processQueue[0]].semaphore = 0;
                 semaphores[*(getPSP())].queueSize--;
                 uint8_t i = 0;
                 for(i = 0; i < semaphores[*(getPSP())].queueSize; i++)
