@@ -119,9 +119,6 @@ semaphore semaphores[MAX_SEMAPHORES];
 #define flashReq 3
 #define resource 4
 
-char PID_Directory[MAX_TASKS][16];
-uint8_t pidDirCount = 0;
-
 // task
 #define STATE_INVALID    0 // no task
 #define STATE_UNRUN      1 // task has never been run
@@ -133,6 +130,11 @@ uint8_t pidDirCount = 0;
 #define MAX_TASKS 12       // maximum number of valid tasks
 uint8_t taskCurrent = 0;   // index of last dispatched task
 uint8_t taskCount = 0;     // total number of valid tasks
+
+char PID_Directory[MAX_TASKS][16];
+uint8_t pidDirCount = 0;
+uint32_t * heap = (uint32_t *)0x20002000;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
+
 
 bool preemption = true;
 bool priority = true;
@@ -171,7 +173,7 @@ void * mallocFromHeap(uint32_t size_in_bytes)
 void * mallocBandage(uint32_t size_in_bytes)
 {
     void * ptr = 0;
-    static uint32_t * heap = (uint32_t *)0x20002000;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
+    // static uint32_t * heap = (uint32_t *)0x20002000;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
     size_in_bytes = (((size_in_bytes-1)/1024)+1)*1024;
     heap += (size_in_bytes / 4);
     if(heap >= (uint32_t *)0x20008000)
@@ -406,6 +408,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
     bool ok = false;
     uint8_t i = 0;
     bool found = false;
+
     // REQUIRED:
     // store the thread name
     // allocate stack space and store top of stack in sp and spInit
@@ -432,6 +435,8 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
             tcb[i].originalPrio = priority;
             // tcb[i].srd = 0;
             strCopy(tcb[i].name, name);
+            strCopy(PID_Directory[pidDirCount], name);
+            pidDirCount++;
             // increment task count
             taskCount++;
             ok = true;
@@ -456,30 +461,6 @@ void restartThread(_fn fn)
 
     // set state to unrun
     tcb[i].state = STATE_UNRUN;
-}
-
-// REQUIRED: modify this function to stop a thread
-// REQUIRED: remove any pending semaphore waiting
-// NOTE: see notes in class for strategies on whether stack is freed or not
-void stopThread(_fn fn)
-{
-    uint8_t i = 0;
-    while(tcb[i].pid != fn)
-        i++;
-    // If state is delayed, remove from any semaphores it is waiting on.
-    if(tcb[i].state == STATE_DELAYED)
-    {
-        tcb[i].semaphore;       // Need some clarity on semaphore...
-    }
-
-    // Free any malloc'd memory. Still working on logic for this one... Don't forget to update the SRD map.
-        // Any thread with more than one SRD bit set will have had to malloc the second or more.
-        // Free all but first SRD bit. Booyah.
-        tcb[i].srd = freeHeap(tcb[i].srd);
-    // Set state to dead. 
-    tcb[i].state = STATE_DEAD;
-    
-    // 
 }
 
 // This free is a sham. It will only work insofar as we have a single function capable of
@@ -534,6 +515,48 @@ uint32_t freeHeap(uint32_t srdBits)
         // Do nothing, no heap detected.
     }
     return srdBits;
+}
+
+// REQUIRED: modify this function to stop a thread
+// REQUIRED: remove any pending semaphore waiting
+// NOTE: see notes in class for strategies on whether stack is freed or not
+void stopThread(_fn fn)
+{
+    uint8_t i = 0, j = 0;
+    while(tcb[i].pid != fn)
+        i++;
+    // If state is blocked, remove from any semaphores it is waiting on.
+    if(tcb[i].state == STATE_BLOCKED)
+    {
+        while(semaphores[*((uint8_t *)tcb[i].semaphore)].processQueue[j] != i)
+        {
+            j++;
+        }
+        for(j = i; j < semaphores[*((uint8_t *)tcb[i].semaphore)].queueSize; j++)
+        {
+            semaphores[*((uint8_t *)tcb[i].semaphore)].processQueue[j] = semaphores[*((uint8_t *)tcb[i].semaphore)].processQueue[j];
+        }
+        semaphores[*((uint8_t *)tcb[i].semaphore)].queueSize--;
+    }
+
+    // Remove task from PID directory
+    char tempName[16] = tcb[i].name;
+    while(strCmp(tempName, PID_Directory[j]))
+        j++;
+
+    for(j = j; j < MAX_TASKS; j++)
+    {
+        strCopy(PID_Directory[j], PID_Directory[j+1]);
+    }
+    pidDirCount--;
+
+
+    // Free any malloc'd memory. Still working on logic for this one... Don't forget to update the SRD map.
+        // Any thread with more than one SRD bit set will have had to malloc the second or more.
+        // Free all but first SRD bit. Booyah.
+        tcb[i].srd = freeHeap(tcb[i].srd);
+    // Set state to dead. 
+    tcb[i].state = STATE_DEAD;
 }
 
 // REQUIRED: modify this function to set a thread priority
@@ -1011,6 +1034,7 @@ void initHw()
     enablePinPullup(PB5);
 
     // Configure CPU Timer
+
     TIMER1_CTL_R &= ~TIMER_CTL_TAEN;                                    // turn-off timer before reconfiguring
     TIMER1_CFG_R = TIMER_CFG_32_BIT_TIMER;                              // configure as 32-bit timer (A+B)
     TIMER1_TAMR_R |= TIMER_TAMR_TACDIR | TIMER_TAMR_TAMR_PERIOD;        // configure for periodic mode (count up)

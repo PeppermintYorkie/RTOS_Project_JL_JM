@@ -78,7 +78,7 @@ void parseFields(USER_DATA* info)
 
             arr_pos += 2;
             chr = info->buffer[arr_pos];
-            while(((chr >= 65 && chr <= 70) || (chr >= 97 && <= 102) || (chr >= 48 && chr <= 57)) && (chr != 0))
+            while(((chr >= 65 && chr <= 70) || (chr >= 97 && chr <= 102) || (chr >= 48 && chr <= 57)) && (chr != 0))
             {
                 arr_pos++;
                 chr = info->buffer[arr_pos];
