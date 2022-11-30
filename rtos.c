@@ -164,11 +164,13 @@ struct _tcb
 // data transfer between svc and shell
 typedef struct _threadInfo
 {
-    char threadPID[11];
-    char threadName[16];
-    char percentCPU[8];
-    char semUsage[12];
-    char memUsage[33];
+    void * pidArray[MAX_TASKS];
+    char nameArray[MAX_TASKS][16];
+    uint32_t cpuTimes[MAX_TASKS];
+    uint8_t numTasks;
+    uint8_t semUsage[MAX_TASKS];
+    void *threadPID;
+    uint32_t memUsage;
 } threadInfo;
 
 //-----------------------------------------------------------------------------
@@ -868,7 +870,14 @@ void svCallIsr()
         }
         case PS:
         {
-            //
+            uint8_t i = 0;
+            for(i = 0; i < taskCount; i++)
+            {
+                *(getPSP()).pidArray[i] = tcb[i].pid;
+                strCopy(*(getPSP()).nameArray[i], tcb[i].name);
+                *(getPSP()).cpuTimes[i] = tcb[i].sysTime;
+                *(getPSP()).numTasks = taskCount;
+            }
             break;
         }
         case IPCS:
@@ -1271,32 +1280,29 @@ void important()
 // Shell command functions
 //-----------------------------------------------------------------------------
 
-void ps(void)
+void ps(threadInfo &packMule)
 {
-    // putsUart0("PS called\n");
+    __asm("  SVC #10");
+    uint8_t i = 0;
+    for(i = 0; i < packMule.numTasks; i++)
+    {
+        
+    }
 }
 
-void ipcs(void)
+void ipcs(threadInfo &packMule)
 {
-    // putsUart0("IPCS called\n");
+    __asm("  SVC #11");
 }
 
-void pidof(const char* name)
+void pidof(threadInfo &packMule, char *name)
 {
-    // if (name != 0)
-    // {
-    //     putsUart0(name);
-    //     putsUart0(" launched\n");
-    // }
+    __asm("  SVC #12");
 }
 
-void pmap(uint32_t pid)
+void pmap(threadInfo &packMule, uint32_t *pid)
 {
-    // char numStr[11];
-    // uint32_tToString(pid, numStr);
-    // putsUart0("Memory usage by ");
-    // putsUart0(numStr);
-    // putsUart0(": \n");
+    __asm("  SVC #13");
 }
 
 void kill(uint32_t *pid)
@@ -1307,38 +1313,6 @@ void kill(uint32_t *pid)
 void run(char* name)
 {
     __asm("  SVC #15");
-}
-
-void getThreadInfo(threadInfo &packMule, uint8_t funNum)
-{
-    switch (funNum)
-    {
-        case PS:
-        {
-            __asm("  SVC #10");
-            break;
-        }
-        case IPCS:
-        {
-            __asm("  SVC #11");
-            break;
-        }
-        case PIDOF:
-        {
-            __asm("  SVC #12");
-            break;
-        }
-        case PMAP:
-        {
-            __asm("  SVC #13");
-            break;
-        }
-        default:
-        {
-            putsUart0("Invalid function number \r\n");
-            break;
-        }
-    }
 }
 
 // REQUIRED: add processing for the shell commands through the UART here
@@ -1373,7 +1347,7 @@ void shell()
         }
         else if(isCommand(&cmdLine, "sched", 1)) // selects prio/rr scheduling---------------------------------------DONE
         {
-            char* arg = getFieldString(&cmdLine, 1);
+            char *arg = getFieldString(&cmdLine, 1);
             makeLowercase(arg);
 
             if(strCmp(arg, "prio"))
@@ -1385,26 +1359,21 @@ void shell()
         }
         else if(isCommand(&cmdLine, "ps", 0))   // displays process/thread status ------------------------PRIV
         {
-            //ps();
-
-            // call getThreadInfo(&struct, PS);
-            // call ps(&struct)
-            // ps prints needed struct info 
-            getThreadInfo(&packMule, PS);
+            ps(&packMule);
         }
         else if(isCommand(&cmdLine, "ipcs", 0)) // displays inter-process/thread communication status ----PRIV
         {
-            //ipcs();
+            ipcs(&packMule);
         }
         else if(isCommand(&cmdLine, "pidof", 1)) // displays pid of a process/thread ----------------------PRIV
         {
-            //const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
-            //pidof(name);
+            char *name = getFieldString(&cmdLine, 1); //***change to char* ??
+            pidof(&packMule, name);
         }
         else if(isCommand(&cmdLine, "pmap", 1)) // displays memory usage of a process/thread -------------PRIV
         {
-            //uint32_t pid = getFieldInteger(&cmdLine, 1);
-            //pmap(pid);
+            uint32_t *pid = (uint32_t *)getFieldInteger(&cmdLine, 1);
+            pmap(&packMule, pid);
         }
         else if(isCommand(&cmdLine, "kill", 1)) // kills a process/thread --------------------------------PRIV
         {
@@ -1415,7 +1384,6 @@ void shell()
         {
             char name[16] = getFieldString(&cmdLine, 1);
             run(name);
-            // can shell touch the PID_Directory????
         }
         else
         {
