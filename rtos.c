@@ -54,12 +54,14 @@
 #include "kernel.h"
 // TODO: Add header files here for your strings functions, ... - DONE JL & JM, 10/31
 
+// LEDs
 #define BLUE_LED   PORTF,2          // on-board blue LED
 #define RED_LED    PORTE,0          // off-board red LED
 #define ORANGE_LED PORTA,2          // off-board orange LED
 #define YELLOW_LED PORTA,3          // off-board yellow LED
 #define GREEN_LED  PORTA,4          // off-board green LED
 
+// PBs
 #define PB0     PORTD,6             // Off-board pushbutton 0
 #define PB1     PORTD,7             // Off-board pushbutton 1
 #define PB2     PORTC,4             // Off-board pushbutton 2
@@ -67,25 +69,11 @@
 #define PB4     PORTC,6             // Off-board pushbutton 4
 #define PB5     PORTC,7             // Off-board pushbutton 5
 
-#define YIELD       0
-#define SLEEP       1
-#define WAIT        2
-#define POST        3
-#define MALLOC      4
-#define REBOOT      5
-#define PREEMPT_ON  6
-#define PREEMPT_OFF 7
-#define SCHED_PRIO  8
-#define SCHED_RR    9
-#define PS          10
-#define IPCS        11
-#define PIDOF       12
-#define PMAP        13
-#define KILL        14
-#define RUN         15
+//-----------------------------------------------------------------------------
+// RTOS Defines and Kernel Variables
+//-----------------------------------------------------------------------------
 
-#define TOP_OF_SRAM 0x20008000      // A macro for the top of SRAM memory
-
+// asm functions
 extern void setTMPLbit(void);
 extern void setASPbit(void);
 extern void setPSP(uint32_t *stack);
@@ -96,9 +84,9 @@ extern uint32_t* popContext(uint32_t *stack);
 extern void fabricateContext(void *pid);
 extern uint32_t extractSVC(uint32_t *stack);
 
-//-----------------------------------------------------------------------------
-// RTOS Defines and Kernel Variables
-//-----------------------------------------------------------------------------
+// memory management
+#define TOP_OF_SRAM 0x20008000             // A macro for the top of SRAM memory
+uint32_t *heap = (uint32_t *)0x20002000;
 
 // function pointer
 typedef void (*_fn)();
@@ -133,14 +121,9 @@ uint8_t taskCount = 0;     // total number of valid tasks
 
 char PID_Directory[MAX_TASKS][16];
 uint8_t pidDirCount = 0;
-uint32_t * heap = (uint32_t *)0x20002000;                        // A statically instantiated heap location, is given memory and never dies, but only touchable in this scope (Losh advisory) -JL
-
 
 bool preemption = true;
 bool priority = true;
-
-// REQUIRED: add store and management for the memory used by the thread stacks
-//           thread stacks must start on 1 kiB boundaries so mpu can work correctly
 
 struct _tcb
 {
@@ -157,6 +140,36 @@ struct _tcb
     uint32_t sysTime;              // system time when thread was running
 } tcb[MAX_TASKS];
 
+// REQUIRED: add store and management for the memory used by the thread stacks
+//           thread stacks must start on 1 kiB boundaries so mpu can work correctly
+
+// svc cases
+#define YIELD       0
+#define SLEEP       1
+#define WAIT        2
+#define POST        3
+#define MALLOC      4
+#define REBOOT      5
+#define PREEMPT_ON  6
+#define PREEMPT_OFF 7
+#define SCHED_PRIO  8
+#define SCHED_RR    9
+#define PS          10
+#define IPCS        11
+#define PIDOF       12
+#define PMAP        13
+#define KILL        14
+#define RUN         15
+
+// data transfer between svc and shell
+typedef struct _threadInfo
+{
+    char threadPID[11];
+    char threadName[16];
+    char percentCPU[8];
+    char semUsage[12];
+    char memUsage[33];
+} threadInfo;
 
 //-----------------------------------------------------------------------------
 // Memory Manager and MPU Funcitons
@@ -309,7 +322,6 @@ void setupSramAccess(void)
     NVIC_MPU_ATTR_R &= ~(NVIC_MPU_ATTR_SRD_M);          // Enable them tasty subregions
     NVIC_MPU_ATTR_R |= NVIC_MPU_ATTR_ENABLE;
 }
-
 
 // REQUIRED: initialize MPU here
 void initMpu(void)
@@ -876,12 +888,21 @@ void svCallIsr()
         }
         case KILL:
         {
-            //
+            stopThread(*(getPSP()));
             break;
         }
         case RUN:
         {
-            //
+            uint8_t i = 0;
+            while(strCmp(tcb[i].name, *(getPSP())))
+                i++;
+            if(i < MAX_TASKS)
+            {
+                restartThread(tcb[i].pid);
+                putsUart0("Thread restarted\r\n");
+            }
+            else
+                putsUart0("Thread not found\r\n");
             break;
         }
         default:
@@ -1252,41 +1273,43 @@ void important()
 
 void ps(void)
 {
-    putsUart0("PS called\n");
+    // putsUart0("PS called\n");
 }
 
 void ipcs(void)
 {
-    putsUart0("IPCS called\n");
+    // putsUart0("IPCS called\n");
 }
 
 void pidof(const char* name)
 {
-    if (name != 0)
-    {
-        putsUart0(name);
-        putsUart0(" launched\n");
-    }
+    // if (name != 0)
+    // {
+    //     putsUart0(name);
+    //     putsUart0(" launched\n");
+    // }
 }
 
 void pmap(uint32_t pid)
 {
-    char numStr[11];
-    uint32_tToString(pid, numStr);
-    putsUart0("Memory usage by ");
-    putsUart0(numStr);
-    putsUart0(": \n");
+    // char numStr[11];
+    // uint32_tToString(pid, numStr);
+    // putsUart0("Memory usage by ");
+    // putsUart0(numStr);
+    // putsUart0(": \n");
 }
 
-void kill(uint32_t pid)
+void kill(uint32_t *pid)
 {
-    char numStr[11];
-    uint32_tToString(pid, numStr);
-    putsUart0(numStr);
-    putsUart0(" killed\n");
+    __asm("  SVC #14");
 }
 
-void getThreadInfo(uint8_t funNum) // add struct as arg1 -> passed into R0
+void run(char* name)
+{
+    __asm("  SVC #15");
+}
+
+void getThreadInfo(threadInfo &packMule, uint8_t funNum)
 {
     switch (funNum)
     {
@@ -1322,7 +1345,7 @@ void getThreadInfo(uint8_t funNum) // add struct as arg1 -> passed into R0
 void shell()
 {
     USER_DATA cmdLine;
-    // add struct declaration here
+    threadInfo packMule;
     while(true)
     {
         putsUart0("\n>>");
@@ -1367,6 +1390,7 @@ void shell()
             // call getThreadInfo(&struct, PS);
             // call ps(&struct)
             // ps prints needed struct info 
+            getThreadInfo(&packMule, PS);
         }
         else if(isCommand(&cmdLine, "ipcs", 0)) // displays inter-process/thread communication status ----PRIV
         {
@@ -1384,17 +1408,13 @@ void shell()
         }
         else if(isCommand(&cmdLine, "kill", 1)) // kills a process/thread --------------------------------PRIV
         {
-            //uint32_t pid = getFieldInteger(&cmdLine, 1);
-            //kill(pid);
-
-            // call kill function, pass in user input PID
-            // kill triggers svc call, PID gets passed in R0
+            uint32_t *pid = (uint32_t *)getFieldInteger(&cmdLine, 1);
+            kill(pid);
         }
         else if(isCommand(&cmdLine, "run", 1)) // runs a program/process/thread ---------------------------PRIV
         {
-            //const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
-            //RED_LED = 1;
-
+            char name[16] = getFieldString(&cmdLine, 1);
+            run(name);
             // can shell touch the PID_Directory????
         }
         else
