@@ -73,12 +73,12 @@
 #define POST        3
 #define MALLOC      4
 #define REBOOT      5
-#define PS          6
-#define IPCS        7
-#define PREEMPT_ON  8
-#define PREEMPT_OFF 9
-#define SCHED_PRIO  10
-#define SCHED_RR    11
+#define PREEMPT_ON  6
+#define PREEMPT_OFF 7
+#define SCHED_PRIO  8
+#define SCHED_RR    9
+#define PS          10
+#define IPCS        11
 #define PIDOF       12
 #define PMAP        13
 #define KILL        14
@@ -120,6 +120,7 @@ semaphore semaphores[MAX_SEMAPHORES];
 #define resource 4
 
 char PID_Directory[MAX_TASKS][16];
+uint8_t pidDirCount = 0;
 
 // task
 #define STATE_INVALID    0 // no task
@@ -731,16 +732,6 @@ void svCallIsr()
             NVIC_APINT_R = NVIC_APINT_VECTKEY | NVIC_APINT_SYSRESETREQ;
             break;
         }
-        case PS:
-        {
-            //
-            break;
-        }
-        case IPCS:
-        {
-            //
-            break;
-        }
         case PREEMPT_ON:
         {
             preemption = true;
@@ -763,6 +754,16 @@ void svCallIsr()
         {
             priority = false;
             putsUart0("Round Robin scheduling enabled\r\n");
+            break;
+        }
+        case PS:
+        {
+            //
+            break;
+        }
+        case IPCS:
+        {
+            //
             break;
         }
         case PIDOF:
@@ -1150,6 +1151,16 @@ void important()
 // Shell command functions
 //-----------------------------------------------------------------------------
 
+void ps(void)
+{
+    putsUart0("PS called\n");
+}
+
+void ipcs(void)
+{
+    putsUart0("IPCS called\n");
+}
+
 void pidof(const char* name)
 {
     if (name != 0)
@@ -1176,20 +1187,43 @@ void kill(uint32_t pid)
     putsUart0(" killed\n");
 }
 
-void ipcs(void)
+void getThreadInfo(uint8_t funNum) // add struct as arg1 -> passed into R0
 {
-    putsUart0("IPCS called\n");
-}
-
-void ps(void)
-{
-    putsUart0("PS called\n");
+    switch (funNum)
+    {
+        case PS:
+        {
+            __asm("  SVC #10");
+            break;
+        }
+        case IPCS:
+        {
+            __asm("  SVC #11");
+            break;
+        }
+        case PIDOF:
+        {
+            __asm("  SVC #12");
+            break;
+        }
+        case PMAP:
+        {
+            __asm("  SVC #13");
+            break;
+        }
+        default:
+        {
+            putsUart0("Invalid function number \r\n");
+            break;
+        }
+    }
 }
 
 // REQUIRED: add processing for the shell commands through the UART here
 void shell()
 {
     USER_DATA cmdLine;
+    // add struct declaration here
     while(true)
     {
         putsUart0("\n>>");
@@ -1203,33 +1237,15 @@ void shell()
         {
             __asm("  SVC #5");
         }
-        else if(isCommand(&cmdLine, "ps", 0))   // displays process/thread status ------------------------PRIV
-        {
-            //ps();
-        }
-        else if(isCommand(&cmdLine, "ipcs", 0)) // displays inter-process/thread communication status ----PRIV
-        {
-            //ipcs();
-        }
-        else if(isCommand(&cmdLine, "kill", 1)) // kills a process/thread --------------------------------PRIV
-        {
-            //uint32_t pid = getFieldInteger(&cmdLine, 1);
-            //kill(pid);
-        }
-        else if(isCommand(&cmdLine, "pmap", 1)) // displays memory usage of a process/thread -------------PRIV
-        {
-            //uint32_t pid = getFieldInteger(&cmdLine, 1);
-            //pmap(pid);
-        }
         else if(isCommand(&cmdLine, "preempt", 1)) // enables/disables preemption------------------------------------DONE
         {
             char* arg = getFieldString(&cmdLine, 1);
             makeLowercase(arg);
 
             if(strCmp(arg, "on"))
-                __asm("  SVC #8");
+                __asm("  SVC #6");
             else if(strCmp(arg, "off"))
-                __asm("  SVC #9");
+                __asm("  SVC #7");
             else
                 errMsg = true;
         }
@@ -1239,21 +1255,48 @@ void shell()
             makeLowercase(arg);
 
             if(strCmp(arg, "prio"))
-                __asm("  SVC #10");
+                __asm("  SVC #8");
             else if(strCmp(arg, "rr"))
-                __asm("  SVC #11");
+                __asm("  SVC #9");
             else
                 errMsg = true;
+        }
+        else if(isCommand(&cmdLine, "ps", 0))   // displays process/thread status ------------------------PRIV
+        {
+            //ps();
+
+            // call getThreadInfo(&struct, PS);
+            // call ps(&struct)
+            // ps prints needed struct info 
+        }
+        else if(isCommand(&cmdLine, "ipcs", 0)) // displays inter-process/thread communication status ----PRIV
+        {
+            //ipcs();
         }
         else if(isCommand(&cmdLine, "pidof", 1)) // displays pid of a process/thread ----------------------PRIV
         {
             //const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
             //pidof(name);
         }
+        else if(isCommand(&cmdLine, "pmap", 1)) // displays memory usage of a process/thread -------------PRIV
+        {
+            //uint32_t pid = getFieldInteger(&cmdLine, 1);
+            //pmap(pid);
+        }
+        else if(isCommand(&cmdLine, "kill", 1)) // kills a process/thread --------------------------------PRIV
+        {
+            //uint32_t pid = getFieldInteger(&cmdLine, 1);
+            //kill(pid);
+
+            // call kill function, pass in user input PID
+            // kill triggers svc call, PID gets passed in R0
+        }
         else if(isCommand(&cmdLine, "run", 1)) // runs a program/process/thread ---------------------------PRIV
         {
             //const char* name = getFieldString(&cmdLine, 1); //***change to char* ??
             //RED_LED = 1;
+
+            // can shell touch the PID_Directory????
         }
         else
         {
