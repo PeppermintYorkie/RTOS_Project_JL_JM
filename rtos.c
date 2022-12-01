@@ -160,6 +160,8 @@ struct _tcb
 #define PMAP        13
 #define KILL        14
 #define RUN         15
+#define STOP        16
+#define RESTART     17
 
 // data transfer between svc and shell
 typedef struct _threadInfo
@@ -169,7 +171,7 @@ typedef struct _threadInfo
     uint32_t cpuTimes[MAX_TASKS];
     uint8_t numTasks;
     uint8_t semUsage[MAX_TASKS];
-    void *threadPID;
+    uint32_t *threadPID;
     uint32_t memUsage;
 } threadInfo;
 
@@ -464,17 +466,7 @@ bool createThread(_fn fn, const char name[], uint8_t priority, uint32_t stackByt
 // REQUIRED: modify this function to restart a thread
 void restartThread(_fn fn)
 {
-    uint8_t i = 0;
-    while(tcb[i].pid != fn)
-        i++;
-    // Set prio to original prio (huh?)
-    tcb[i].priority = tcb[i].originalPrio;
-
-    // sp gets spinit
-    tcb[i].sp = tcb[i].spInit;
-
-    // set state to unrun
-    tcb[i].state = STATE_UNRUN;
+    __asm("     SVC #17");
 }
 
 // This free is a sham. It will only work insofar as we have a single function capable of
@@ -536,41 +528,7 @@ uint32_t freeHeap(uint32_t srdBits)
 // NOTE: see notes in class for strategies on whether stack is freed or not
 void stopThread(_fn fn)
 {
-    uint8_t i = 0, j = 0;
-    while(tcb[i].pid != fn)
-        i++;
-    // If state is blocked, remove from any semaphores it is waiting on.
-    if(tcb[i].state == STATE_BLOCKED)
-    {
-        while(semaphores[*((uint8_t *)tcb[i].semaphore)].processQueue[j] != i)
-        {
-            j++;
-        }
-        for(j = i; j < semaphores[*((uint8_t *)tcb[i].semaphore)].queueSize; j++)
-        {
-            semaphores[*((uint8_t *)tcb[i].semaphore)].processQueue[j] = semaphores[*((uint8_t *)tcb[i].semaphore)].processQueue[j];
-        }
-        semaphores[*((uint8_t *)tcb[i].semaphore)].queueSize--;
-    }
-
-    // Remove task from PID directory
-    char tempName[16] = tcb[i].name;
-    while(strCmp(tempName, PID_Directory[j]))
-        j++;
-
-    for(j = j; j < MAX_TASKS; j++)
-    {
-        strCopy(PID_Directory[j], PID_Directory[j+1]);
-    }
-    pidDirCount--;
-
-
-    // Free any malloc'd memory. Still working on logic for this one... Don't forget to update the SRD map.
-        // Any thread with more than one SRD bit set will have had to malloc the second or more.
-        // Free all but first SRD bit. Booyah.
-        tcb[i].srd = freeHeap(tcb[i].srd);
-    // Set state to dead. 
-    tcb[i].state = STATE_DEAD;
+    __asm("     SVC #16");
 }
 
 // REQUIRED: modify this function to set a thread priority
@@ -871,28 +829,52 @@ void svCallIsr()
         case PS:
         {
             uint8_t i = 0;
+            threadInfo *temp = (threadInfo *)*(getPSP());
             for(i = 0; i < taskCount; i++)
             {
-                *(getPSP()).pidArray[i] = tcb[i].pid;
-                strCopy(*(getPSP()).nameArray[i], tcb[i].name);
-                *(getPSP()).cpuTimes[i] = tcb[i].sysTime;
-                *(getPSP()).numTasks = taskCount;
+                temp->pidArray[i] = tcb[i].pid;
+                strCopy(temp->nameArray[i], tcb[i].name);
+                temp->cpuTimes[i] = tcb[i].sysTime;
+                temp->numTasks = taskCount;
             }
             break;
         }
         case IPCS:
         {
-            //
+            uint8_t i = 0;
+            threadInfo *temp = (threadInfo *)*(getPSP());
+            for(i = 0; i < taskCount; i++)
+            {
+                strCopy(temp->nameArray[i], tcb[i].name);
+                temp->semUsage[i] = *((uint8_t *)tcb[i].semaphore);
+                temp->numTasks = taskCount;
+            }
             break;
         }
         case PIDOF:
         {
-            //
+            uint8_t i = 0;
+            threadInfo *temp = (threadInfo *)*(getPSP());
+            char buffer[16];
+            strCopy(buffer, *(getPSP()+1));
+            while(!strCmp(buffer, tcb[i].name))
+            {
+                i++;
+            }
+            temp->threadPID = tcb[i].pid;
             break;
         }
         case PMAP:
         {
-            //
+            uint8_t i = 0;
+            uint32_t *temp = *(getPSP()+1);
+            threadInfo *temp2 = (threadInfo *)*(getPSP());
+
+            while(temp != (uint32_t *)tcb[i].pid)
+            {
+                i++;
+            }
+            temp2->memUsage = tcb[i].srd;
             break;
         }
         case KILL:
@@ -905,13 +887,90 @@ void svCallIsr()
             uint8_t i = 0;
             while(strCmp(tcb[i].name, *(getPSP())))
                 i++;
-            if(i < MAX_TASKS)
+
+            
+            // Set prio to original prio (huh?)
+            tcb[i].priority = tcb[i].originalPrio;
+
+            // sp gets spinit
+            tcb[i].sp = tcb[i].spInit;
+
+            // set state to unrun
+            tcb[i].state = STATE_UNRUN;
+
+            break;
+        }
+        case STOP:
+        {
+            uint8_t i = 0, j = 0;
+
+            while(tcb[i].pid != *(getPSP()))
+                i++;
+            // If state is blocked, remove from any semaphores it is waiting on.
+            if(tcb[i].state == STATE_BLOCKED)
             {
-                restartThread(tcb[i].pid);
-                putsUart0("Thread restarted\r\n");
+                while(semaphores[*((uint8_t *)tcb[i].semaphore)].processQueue[j] != i)
+                {
+                    j++;
+                }
+                for(j = i; j < semaphores[*((uint8_t *)tcb[i].semaphore)].queueSize; j++)
+                {
+                    semaphores[*((uint8_t *)tcb[i].semaphore)].processQueue[j] = semaphores[*((uint8_t *)tcb[i].semaphore)].processQueue[j];
+                }
+                semaphores[*((uint8_t *)tcb[i].semaphore)].queueSize--;
+                // semaphores[*((uint8_t *)tcb[i].semaphore)].count++;
             }
-            else
-                putsUart0("Thread not found\r\n");
+
+            // Remove task from PID directory
+            char tempName[16] = tcb[i].name;
+            while(strCmp(tempName, PID_Directory[j]))
+                j++;
+
+            for(j = j; j < MAX_TASKS; j++)
+            {
+                strCopy(PID_Directory[j], PID_Directory[j+1]);
+            }
+            pidDirCount--;
+
+
+            // Free any malloc'd memory. Still working on logic for this one... Don't forget to update the SRD map.
+                // Any thread with more than one SRD bit set will have had to malloc the second or more.
+                // Free all but first SRD bit. Booyah.
+                tcb[i].srd = freeHeap(tcb[i].srd);
+            // Set state to dead. 
+            tcb[i].state = STATE_DEAD;
+            break;
+        }
+        case RESTART:
+        {
+            uint8_t i = 0;
+            // bool found = false;
+            // // while(!found && (i != MAX_TASKS))
+            // // {
+            // //     found = strCmp(*(getPSP()),tcb[i].name);
+            // //     i++;
+            // // }
+
+            // if(found)
+            // {
+            char temp[16];
+            strCopy(temp, *(getPSP()));
+
+            while(*(getPSP()) != tcb[i].pid)
+                i++;
+                // Set prio to original prio (huh?)
+                tcb[i].priority = tcb[i].originalPrio;
+
+                // sp gets spinit
+                tcb[i].sp = tcb[i].spInit;
+
+                // set state to unrun
+                tcb[i].state = STATE_UNRUN;
+            // }
+            // else
+            // {
+            //     putsUart0("Task not found.\r\n");
+            // }
             break;
         }
         default:
@@ -925,6 +984,7 @@ void svCallIsr()
 // REQUIRED: code this function - JL & JM, 11/14
 void mpuFaultIsr()
 {
+    kill(*(getPSP()));
     printf("MPU Fault in process %d \r\n", taskCurrent); //*((uint32_t*)tcb[taskCurrent].pid)
     printf("Value of PSP: %h \r\n", (uint32_t)getPSP);
     printf("Value of MSP: %h \r\n", (uint32_t)getMSP);
@@ -1064,7 +1124,8 @@ void initHw()
     enablePinPullup(PB5);
 
     // Configure CPU Timer
-
+    SYSCTL_RCGCTIMER_R |= SYSCTL_RCGCTIMER_R1;
+    _delay_cycles(3);
     TIMER1_CTL_R &= ~TIMER_CTL_TAEN;                                    // turn-off timer before reconfiguring
     TIMER1_CFG_R = TIMER_CFG_32_BIT_TIMER;                              // configure as 32-bit timer (A+B)
     TIMER1_TAMR_R |= TIMER_TAMR_TACDIR | TIMER_TAMR_TAMR_PERIOD;        // configure for periodic mode (count up)
@@ -1280,34 +1341,94 @@ void important()
 // Shell command functions
 //-----------------------------------------------------------------------------
 
-void ps(threadInfo &packMule)
+void ps(threadInfo *packMule)
 {
     __asm("  SVC #10");
     uint8_t i = 0;
-    for(i = 0; i < packMule.numTasks; i++)
+    uint32_t totalCpuTime = 0;
+
+    for(i = 0; i < packMule->numTasks; i++)
     {
-        
+        totalCpuTime += packMule->cpuTimes[i];
+    }
+    // printf("TOTAL CPU TIME: %d\r\n\r\n",totalCpuTime);
+
+
+    for(i = 0; i < packMule->numTasks; i++)
+    {
+        uint32_t cpuTime = packMule->cpuTimes[i];
+        uint32_t percentCpuTime = (packMule->cpuTimes[i]) / (totalCpuTime/10000);
+        putsUart0("NAME: ");
+        putsUart0(packMule->nameArray[i]);
+        putsUart0("\t");
+        printf("PID: %h\t",(uint32_t)packMule->pidArray[i]);
+        putsUart0("CPU TIME: ");
+        // printf("%d",percentCpuTime);
+        char buffer[8];
+        uint32_tToString(percentCpuTime, buffer);
+
+        buffer[4] = buffer[3];
+        buffer[3] = buffer[2];
+        buffer[2] = '.';
+        buffer[7] = 0;
+        putsUart0(buffer);
+        putsUart0("\n\r");
     }
 }
 
-void ipcs(threadInfo &packMule)
+void ipcs(threadInfo *packMule)
 {
     __asm("  SVC #11");
+
+    uint8_t i = 0;
+
+
+    for(i = 0; i < packMule->numTasks; i++)
+    {
+        putsUart0("NAME: ");
+        putsUart0(packMule->nameArray[i]);
+        putsUart0("\t");
+        // printf("SEM-USG: %d\n\r", (uint32_t)packMule->semUsage[i]):
+        putsUart0("SM-USG:\t");
+        if(packMule->semUsage[i] == 0)
+        {
+            putsUart0("NONE\n\r");
+        }
+        else if(packMule->semUsage[i] == 1)
+        {
+            putsUart0("KEY-PRESSED\n\r");
+        }
+        else if(packMule->semUsage[i] == 2)
+        {
+            putsUart0("KEY-RELEASED\n\r");
+        }
+        else if(packMule->semUsage[i] == 3)
+        {
+            putsUart0("FLASH-REQ\n\r");
+        }
+        else if(packMule->semUsage[i] == 4)
+        {
+            putsUart0("RESOURCE\n\r");
+        }       
+    }
+
 }
 
-void pidof(threadInfo &packMule, char *name)
+void pidof(threadInfo *packMule, char *name)
 {
     __asm("  SVC #12");
+    printf("PID: %h\n\r", (uint32_t)packMule->threadPID);
 }
 
-void pmap(threadInfo &packMule, uint32_t *pid)
+void pmap(threadInfo *packMule, uint32_t *pid)
 {
     __asm("  SVC #13");
+    printf("SRD Bits: %h \n\r", packMule->memUsage);
 }
 
 void kill(uint32_t *pid)
 {
-    __asm("  SVC #14");
+    __asm("  SVC #16");
 }
 
 void run(char* name)
@@ -1372,12 +1493,12 @@ void shell()
         }
         else if(isCommand(&cmdLine, "pmap", 1)) // displays memory usage of a process/thread -------------PRIV
         {
-            uint32_t *pid = (uint32_t *)getFieldInteger(&cmdLine, 1);
+            uint32_t *pid = (uint32_t *)hexStringToUint32_t(getFieldString(&cmdLine, 1));
             pmap(&packMule, pid);
         }
         else if(isCommand(&cmdLine, "kill", 1)) // kills a process/thread --------------------------------PRIV
         {
-            uint32_t *pid = (uint32_t *)getFieldInteger(&cmdLine, 1);
+            uint32_t *pid = (uint32_t *)hexStringToUint32_t(getFieldString(&cmdLine, 1));
             kill(pid);
         }
         else if(isCommand(&cmdLine, "run", 1)) // runs a program/process/thread ---------------------------PRIV
@@ -1438,7 +1559,7 @@ int main(void)
     ok &= createThread(important, "Important", 0, 1024);
     ok &= createThread(uncooperative, "Uncoop", 6, 1024);
     // ok &= createThread(errant, "Errant", 6, 1024);
-//    ok &= createThread(shell, "Shell", 6, 2048);
+   ok &= createThread(shell, "Shell", 6, 2048);
 
     // Start up RTOS
     if (ok)
